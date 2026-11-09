@@ -1,0 +1,578 @@
+# api-regress 产品需求 v1
+
+> 状态：草案 r3（已经过 2 轮共 6 份 review）
+> 来源：`spec-01.md` + 需求澄清讨论（2026-11-09）
+> 配套文档：实现约束见 [spec-v1-design.md](spec-v1-design.md)
+> 决策记录见 §13。
+
+## 1. 背景与目标
+
+发版后，线上接口可能被意外改坏：字段被删、类型被改、金额精度变化、状态码变化。这类问题单元测试很难覆盖，人工回归又容易漏看。
+
+api-regress 是一个 CLI 小工具，主要给 QA 做回归，开发也能用。它把同一组 GET/HEAD 请求发给**基线（baseline）**和**候选（candidate）**两个目标（两个环境，或者两个版本），对比两边 JSON 响应的结构和字段，按严重级别出报告，并给出 CI 可用的退出码。
+
+**核心原则**
+- **结构性破坏零配置即可发现**：删字段、改类型、状态码变化，不写任何规则就能报出来。
+- **金额精度需要配置 `decimal` 规则**：给 `**.amount`、`**.price` 这类路径加上规则即可。
+- **值的比较只在显式配置时进行**。
+
+### 1.1 典型场景
+
+| # | 场景 | 用法 |
+|---|---|---|
+| S1 | 预发和生产同时在线，发版前对比 | `run`：两边都实时请求 |
+| S2 | 只有一个环境：发版前录基线，发版后对比 | `record` → 发版 → `compare` |
+| S3 | 差异是预期的变更，需要更新基线 | `accept` |
+| S4 | 接入 CI，遇到 breaking 时阻断流水线 | `run` / `compare` + `--fail-on` + JUnit |
+
+### 1.2 目标用户
+- **QA**：维护请求清单（suite），看报告。日常使用不需要写代码。
+- **开发**：在本地验证改动的影响；需要复杂对比时，用 `asserts`（高级用法，可选）。
+
+## 2. 范围
+
+### 2.1 v1 包含
+1. CLI 命令：`validate`、`run`、`record`、`compare`、`accept`
+2. 只发 **GET / HEAD** 请求，只比较 **JSON** 响应
+3. YAML 格式的 suite，用 `${VAR}` 注入环境变量
+4. 默认只比较**结构**：字段增删、类型、状态码；配了 `decimal` 的字段还比较小数位
+5. 字段规则：`ignore`、`decimal`、`on_value_change`、`array`、`nullable`
+6. `success` 业务成功条件
+7. `asserts` 表达式（高级用法）
+8. 三个差异级别：breaking / suspicious / info
+9. 报告：HTML、Markdown、JUnit XML，以及 `result.json`
+10. **不稳定字段建议**：基线请求 2 次，两次不同的字段列为"建议 ignore"，**不会自动忽略**
+11. 提示"本次未命中的规则"
+12. 关键节点日志
+
+### 2.2 本期不做
+- **写方法**：suite 里出现写方法，按配置错误处理。
+- **自动噪音识别**：只给出 §7.8 的"建议 ignore"，不自动排除差异。
+- **HAR 导入**
+- **脱敏**：见 §11 L5。
+- **主机白名单、dry-run**
+
+### 2.3 非目标（长期不做）
+- **不做接口管理平台**：不做 Apifox / Postman 那一套，包括登录流程、请求串联、变量提取、前后置脚本、Mock、接口文档。
+- **不做断言编辑器或界面**：`asserts` 和 `success` 只是 YAML 里的一行表达式，用于对比基线与候选、判断业务是否成功，不会发展成单接口断言平台。
+- **鉴权由使用者自理**：需要鉴权的接口，使用者先用自己的方式拿到 token，再通过 `${VAR}` 注入请求头。
+
+## 3. 术语
+
+| 术语 | 含义 |
+|---|---|
+| suite | 一个 YAML 配置文件，包含目标和请求清单 |
+| target | 固定两个：`baseline`、`candidate` |
+| sample | 一条请求的一次响应记录 |
+| snapshot | 落盘的基线 sample 集合，可以替代实时请求基线 |
+| finding | 一条差异：路径、类型、级别、两侧的值。**参与退出码计算** |
+| warning | 一条提示，例如降级、基线为空。**不是 finding，不参与退出码** |
+| 请求状态 | 每条请求最终属于 `ok` / `error` / `inconclusive` / `unsupported` 之一，见 §7.2 |
+| run 目录 | 一次运行的输出目录 |
+
+## 4. CLI
+
+```
+api-regress validate <suite.yaml>
+api-regress run      <suite.yaml> [--out DIR] [--fail-on LEVEL] [--baseline-url URL] [--candidate-url URL]
+api-regress record   <suite.yaml> --snapshot DIR [--clean] [--baseline-url URL]
+api-regress compare  <suite.yaml> --snapshot DIR [--out DIR] [--fail-on LEVEL] [--candidate-url URL]
+api-regress accept   <run-dir> --snapshot DIR
+```
+
+**通用参数**
+- `--only NAME`：可以重复，只处理指定的请求。
+- `--log-level`：默认 INFO。
+- `--log-file`
+- `--format html,md,junit`：默认全部输出；`result.json` 总会输出。
+
+**参数取值**
+- `--fail-on`：`breaking`（默认）/ `suspicious` / `info` / `never`
+- `--out`：默认 `./api-regress-out/<YYYYmmdd-HHMMSS>/`
+
+### 4.1 各命令的行为、输出与退出码
+
+| 命令 | 需要的 target | 行为 | stdout 摘要 | 退出码 |
+|---|---|---|---|---|
+| `validate` | 无（只做静态检查） | 校验 suite 的语法和字段、路径、表达式白名单。缺少环境变量**按 target 分别列出，只给 warning** | `OK, N requests` + warning 列表 | 0 / 2 |
+| `run` | 两侧 | 基线串行请求 2 次，候选请求 1 次，然后对比 | 各级别 finding 数、各请求状态数、报告路径 | 0 / 1 / 2 / 3 / 4 |
+| `record` | 只需要 baseline | 每条请求串行请求 2 次，**按请求合并**写入快照。失败的请求保留旧 sample；`--clean` 会先清空快照 | 写入数、未写入的请求及原因、**不稳定字段建议** | 0 / 2 / 3 / 4 |
+| `compare` | 只需要 candidate | 基线读快照，候选请求 1 次，然后对比 | 同 `run` | 0 / 1 / 2 / 3 / 4 |
+| `accept` | 无 | 把 run 目录里的候选响应**按请求合并**进快照，见 §8.3 | 接受数、被拒的请求及原因 | 0 / 3 / 4 |
+
+**退出码定义**
+
+| 码 | 含义 |
+|---|---|
+| 0 | 全部成功：没有达到 `--fail-on` 的 finding，所有请求都是 `ok` 或 `unsupported`；record / accept 全部写入 |
+| 1 | 存在达到 `--fail-on` 级别的 finding |
+| 2 | suite 有问题：不合法、本命令需要的环境变量缺失、出现写方法、表达式没通过白名单、快照 manifest 版本不兼容 |
+| 3 | 工具自身出错：无法写入报告或快照、快照损坏、内部异常 |
+| 4 | 至少有一条请求是 `error` 或 `inconclusive`（record / accept 指：至少有一条请求没写入），并且没有触发 1 |
+
+多个条件同时满足时，按 **2 > 3 > 1 > 4 > 0** 取值。单条请求出问题不会中断整个运行。warning 不影响退出码。
+
+## 5. 配置格式（suite.yaml）
+
+下面是一个完整的电商示例，§12 的端到端流程也基于它。
+
+```yaml
+version: 1
+
+targets:
+  baseline:
+    base_url: https://api.shop.example.com
+    headers:
+      Authorization: "Bearer ${BASE_TOKEN}"
+  candidate:
+    base_url: https://api.shop.example.com      # S2：两侧可以是同一个地址
+    headers:
+      Authorization: "Bearer ${CAND_TOKEN}"
+
+defaults:
+  timeout: 10          # 秒
+  concurrency: 4
+  retries: 1           # 只对连接错误和超时重试，任何状态码都不重试
+  compare: structure   # structure | values
+  success: "body.code == 0"      # 只对 JSON 响应求值，见 §7.3
+  headers:
+    Accept: application/json
+  rules:
+    - path: "**.updated_at"
+      ignore: true
+    - path: "**.amount"
+      decimal: {}
+    - path: "**.price"
+      decimal: {}
+
+requests:
+  - name: health
+    method: HEAD
+    path: /health
+
+  - name: order-list
+    method: GET
+    path: /v1/orders
+    query: { page: "1", size: "20" }   # 值一律加引号
+    # 分页列表数据会变，保持默认的 schema 模式，不要用 keyed
+
+  - name: order-detail
+    method: GET
+    path: /v1/orders/10086
+    compare_headers: [Content-Type]
+    rules:
+      - path: data.amount
+        on_value_change: breaking    # 固定订单，金额也要比值
+      - path: data.items             # array 规则写在数组本身的路径上
+        array: { keys: [sku_id] }    # 写了 keys 即为 keyed 模式
+      - path: data.coupon
+        nullable: true
+```
+
+**规则说明**
+- **name**：只能包含 `[A-Za-z0-9_.-]`，suite 内唯一。
+- **字段名拼写**：拼错会报错，并给出出错的行号。
+- **环境变量**：只替换字符串值里的 `${VAR}`，支持 `${VAR:-默认值}`。每个命令只解析它需要的那一侧 target（见 §4.1）。
+- **YAML 常见坑**（在 doc/user 里写清楚）：
+  - `007` 会被解析成数字 7，`1.10` 会被解析成 1.1，`on`/`no` 会被解析成布尔值。
+  - 所以 query 的值和数字字面量都要加引号。
+- **数组对齐只有一种写法**：`array: {mode: schema|keyed|positional|unordered, keys: [...]}`。写了 `keys` 就默认用 keyed。原需求里的 "array_keys" 就是这里的 `keys`。
+
+## 6. 路径与规则
+
+### 6.1 路径语法
+| 写法 | 含义 |
+|---|---|
+| `data.items` | 逐级访问对象 key，开头不写 `$` |
+| `data.items[0]` | 数组下标（只在 positional 模式下才有意义） |
+| `data.items[*].price` | 任意数组元素，不管哪种模式都能匹配 |
+| `meta["x.y"]` | key 里有 `.`、`[` 或 `"` 时，用引号括起来 |
+| `**.updated_at` | 任意深度，也包括 0 层，所以能匹配根上的 `updated_at` |
+
+**下标写法的限制**：对 schema 或 keyed 模式的数组写了字面下标（例如 `items[0].x`），规则不会生效，并产生 warning。
+
+### 6.2 报告里的路径
+- **具体路径**：
+  - 对象、positional 模式：`data.items[3].price`
+  - keyed 模式：`data.items[sku_id=A12].price`。这种写法**只用于展示**，不能写进规则。
+  - schema 模式：等于泛化路径，同时附一个出问题元素的下标作为示例。
+- **泛化路径**：把下标和 key 都换成 `[*]`。报告里给出泛化路径，可以直接粘贴到规则里。
+- **非 body 的 finding 用伪路径**：`$status`、`$header.Content-Type`、`$success`、`$assert[0]`。
+
+### 6.3 规则怎么生效
+每条规则都由若干属性组成：`ignore`、`decimal`、`scale_level`、`on_value_change`、`array`、`nullable`。
+
+**合并方式**：同一个节点被多条规则匹配时，**每个属性单独决定用哪条规则**，比较顺序如下：
+1. 越具体越优先：没有通配的优先于 `[*]`，`[*]` 优先于 `**`；同类通配下，层级越深越优先。
+2. 具体程度相同，请求级优先于全局。
+3. 还相同，后写的优先。
+
+**示例**
+- 全局写了 `**.amount: {decimal}`，请求级写了 `data.amount: {on_value_change: breaking}`。结果是两个属性同时生效。
+- 全局写了 `**.updated_at: {ignore: true}`，请求级写了 `data.updated_at: {ignore: false}`。请求级更具体，所以不忽略。
+
+**ignore 剪枝**：
+- 一个节点最终 `ignore: true` 时，它的整棵子树都不再对比。
+- 子树里再写的规则（包括 `ignore: false`）**都不生效**。能静态判断出这种情况时，`validate` 给出 warning。
+
+## 7. 对比语义
+
+### 7.1 单条请求的流程
+1. **拿 sample**：
+   - 基线：实时串行请求 2 次，或者读快照。
+   - 候选：请求 1 次。
+   - 基线第 1 次失败：请求状态为 `error`。
+   - 基线第 2 次失败，或者第 2 次不满足 `success`：不出不稳定字段建议，产生 warning。
+2. **判定请求状态**（§7.2，按表格顺序，**第一条匹配生效**）。只有状态为 `ok` 时才继续往下走。
+3. **状态码不同**：产生 `status_changed`，**这条请求就此结束**，不再执行 success、body、asserts。
+4. **业务成功判定**（§7.3）。
+5. **对比 `compare_headers`**。
+6. **对比 body**（§7.4 – 7.6），仅在两侧都是 JSON 时进行。
+7. **执行 asserts**（§7.7）。
+8. **计算不稳定字段建议**（§7.8）。
+
+基线有 2 个 sample 时，**只用第 1 个和候选对比**，第 2 个只用来计算建议。
+
+### 7.2 请求状态判定（第一条匹配生效）
+
+| # | 情况 | 状态 | 说明 |
+|---|---|---|---|
+| 1 | 任一侧出现网络错误或超时，重试后仍然失败 | `error` | |
+| 2 | 快照里没有这条请求，或者指纹不一致（§8.2） | `inconclusive` | 提示"请 record 或 accept" |
+| 3 | 任一侧返回 401 / 403 / 429 | `inconclusive` | 提示"检查该侧 token 或限流" |
+| 4 | 基线返回 5xx | `inconclusive` | 提示"基线不可用" |
+| 5 | 配了 `success`，且基线不满足 | `inconclusive` | 提示"基线业务失败" |
+| 6 | 两侧都不是 JSON，而且不是 HEAD 或 204 | `unsupported` | 只比状态码 |
+| 7 | 其他 | `ok` | |
+
+`ok` 状态下的几种特殊情况：
+- **候选 5xx、基线 2xx**：在 §7.1 第 3 步产生 `status_changed`（breaking）。
+- **两侧状态码相同但都不是 2xx，且没配 `success`**：照常对比，同时产生 warning："两侧都没有成功，测试数据可能已失效"。
+- **HEAD / 204**：只比较状态码和 `compare_headers`，不判定 success。
+- **3xx**：工具不跟随重定向，3xx 状态码本身就参与对比。
+
+**body 的判定**
+- **是否为 JSON**：Content-Type 是 `application/json` 或 `*+json` 时直接解析；没有 Content-Type 时尝试解析一次。
+- **声明是 JSON 但解析失败**：这一侧按非 JSON 处理，并产生 warning。
+- **一侧是 JSON、另一侧不是**：`body_kind_changed`（breaking）。
+- **出现 NaN、Infinity、重复的 key**：产生 warning。重复 key 取最后一个值。
+
+**响应头对比**：默认不比较。列在 `compare_headers` 里的头按以下规则：
+- 候选缺失：breaking。
+- 值变化：suspicious。
+- `Content-Type` 的媒体类型变化：breaking；只改了 charset 不算。
+
+### 7.3 业务成功条件 `success`
+很多接口用 `200 {code, msg, data}` 返回业务错误，只看状态码会漏掉。`success` 是一条表达式，可以在 defaults 里写，也可以在单条请求上覆盖。表达式里能用 `status`、`headers`、`body` 这几个变量。
+
+**求值范围**：只对 JSON 响应求值。HEAD、204、非 JSON 的响应跳过这一步。表达式抛出异常时，视为**不满足**，并产生 warning。
+
+| 情况 | 处理 |
+|---|---|
+| 基线不满足 | 请求状态为 `inconclusive`（§7.2 第 5 条） |
+| 基线满足、候选不满足 | 产生 `business_error`（breaking），**跳过 body 对比和 asserts** |
+| `record` 时不满足 | 这条请求不写入快照，保留旧 sample |
+
+### 7.4 finding 类型与默认级别
+
+| 类型 | 触发条件 | 默认级别 |
+|---|---|---|
+| `status_changed` | 状态码不同 | breaking |
+| `body_kind_changed` | 一侧是 JSON，另一侧不是 | breaking |
+| `business_error` | 见 §7.3 | breaking |
+| `header_missing` / `header_changed` | 见 §7.2 响应头对比 | breaking / suspicious（Content-Type 媒体类型变化记 breaking） |
+| `field_removed` | 基线有、候选没有的字段 | breaking |
+| `type_changed` | JSON 类型变化，**包括对象或数组变成 null** | breaking |
+| `nullability_changed` | **标量**字段在 null 与非 null 之间变化 | 非 null → null：suspicious；null → 非 null：info |
+| `scale_changed` | 配了 decimal 的字段，小数位不同 | breaking（可以用 `scale_level` 修改） |
+| `field_added` | 候选新增了字段 | info |
+| `array_length_changed` | schema / positional 模式下，数组长度不同 | 空 ↔ 非空：suspicious；其他：info |
+| `element_missing` / `element_added` | keyed 模式：某个 key 只在一侧出现。positional 模式：超出另一侧长度的下标 | suspicious / info |
+| `value_changed` | 配了 `on_value_change` 或 `compare: values` 才会比较。unordered 模式下集合不相等时，记在数组路径上 | 由规则决定；`compare: values` 时为 suspicious |
+| `assert_failed` | assert 结果为假 | 由 assert 决定，默认 suspicious |
+| `assert_error` | assert 求值时抛出异常 | suspicious（固定） |
+
+**补充说明**
+- **类型**：取值为 object、array、string、number、boolean、null。int、float、Decimal 都算 number，所以 `1` 和 `1.0` 不算类型变化。
+- **只报最高层节点**：对象被删除、或者类型变化（包括变成 null）时，只在这个节点上报一条，不再展开它的子字段。
+- **`nullable: true`**：这个字段上的 `nullability_changed` 不再报。
+- **字段改名**：会报成 `field_removed` 和 `field_added` 两条。这符合预期，doc/user 里要配一个示例说明。
+
+### 7.5 decimal 规则
+- **小数位怎么算**：按 JSON 原文计算。
+
+  | 原文 | 小数位 |
+  |---|---|
+  | `1.10` | 2 |
+  | `1.1` | 1 |
+  | `1` | 0 |
+  | `1.50E1` | 1 |
+  | `1E2` | 0 |
+  | `-0.00` | 2 |
+
+- **判定**：两侧小数位不同时，记 `scale_changed`。只有同时配了 `on_value_change`，才会比较数值本身。
+- **`allow_string: true`**：`"12.50"` 这种字符串也按 decimal 处理。但如果一侧是字符串、另一侧是数字，仍然算 `type_changed`。
+
+### 7.6 数组对齐
+
+| mode | 行为 | 适用场景 |
+|---|---|---|
+| `schema`（默认） | 把所有元素合并成一张表：每个字段出现过哪些类型、哪些小数位。只比较两侧的这张表和数组长度，不逐个比较元素 | 分页列表、实时数据 |
+| `keyed` | 按 `keys` 配对元素，可以用多个字段组合成一个 key。配对上的元素递归比较 | 数据固定、元素有 id 的数组 |
+| `positional` | 按下标配对，配对上的元素递归比较 | 顺序有意义的固定数组 |
+| `unordered` | 把元素当作多重集合比较值，属于值比较 | 顺序不定的小型固定数组 |
+
+**schema 模式的细则**
+- **字段消失**：某个字段在基线的任一元素里出现过，而候选的所有元素里都没有，记 `field_removed`。
+- **类型比较**：先去掉 null，再比较两侧的类型集合；候选出现了新的类型，记 `type_changed`。可空性单独按 `nullability_changed` 判断。
+- **decimal**：候选的小数位集合不是基线的子集，记 `scale_changed`。finding 里同时给出两侧的小数位集合，以及一个示例下标。
+- **任一侧为空**：只比较长度，并产生 warning："某侧为空，未比较元素结构"。
+- **值比较不生效**：`on_value_change` 和 `compare: values` 在 schema 数组内部不起作用，运行时产生 warning。如果需要比较值，改用 keyed 模式。
+- **keyed 降级**：key 字段缺失或者重复时，这个数组降级为 schema 模式，并产生 warning。
+
+### 7.7 asserts（高级用法，可选）
+
+```yaml
+asserts:
+  - expr: "len(cand.body.data['items']) >= len(base.body.data['items'])"
+    level: suspicious
+    message: "订单条目变少"
+```
+
+- **变量**：`base` 和 `cand` 各有 `.status`、`.headers`（不区分大小写）、`.body` 三个属性。
+  - body 里的字段可以用点号访问。
+  - 字段名和函数名冲突、或者不是合法标识符时，改用 `["..."]`。
+  - 原始响应不受 ignore 影响。
+- **内置函数**：`len`、`scale`、`get(obj, "path", default)`、`exists(obj, "path")`、`is_number`、`is_string`、`keys`、`set`、`all`、`any`、`abs`、`min`、`max`。
+- **执行条件**：只在请求状态为 `ok`、状态码相同、两侧都是 JSON、并且没有产生 `business_error` 时执行。
+- **校验**：只能使用白名单里的语法和函数。`validate` 和每次运行开始前都会检查，不通过时退出码为 2。
+- **建议**：路径可能缺失时用 `get(...)`，可以减少 `assert_error`。
+
+### 7.8 不稳定字段建议
+- **前提**：只有在基线有 2 个 sample，而且两个 sample 都满足 `success` 时，才会计算。
+- **比较方式**：按 `compare: values` 的方式比较基线的这 2 个 sample，数组按配置对齐。以下两种字段会被列出：
+  - 值不一样的叶子字段
+  - 只在其中一个 sample 里出现的**对象字段**
+- **以下情况不计入建议**：
+  - 数组元素多出来或者少了（只是数据量变化）
+  - schema 数组内部的值
+  - 已经被 ignore 的路径
+- **输出**：
+  - 每条建议给出泛化路径，以及一段可以直接复制的 YAML 规则。
+  - 这些字段**不会被自动忽略**。
+  - `record` 的 stdout 也会打印这些建议。
+
+## 8. 快照
+
+### 8.1 内容
+```
+snapshot/
+  manifest.json      # schema_version、工具版本、每条请求的指纹、录制时间和来源（record / accept）
+  requests/<name>.json
+```
+
+- **每个 sample 保存的内容**：状态码、`Content-Type` 及 `compare_headers` 列出的响应头、body 原文、耗时。
+- **不保存请求头的值**，所以 token 和 Set-Cookie 不会落盘。
+- **写入是原子的**：写到一半中断，不会留下半份快照。
+
+### 8.2 请求指纹
+- **计算依据**：method、path 和 query 的**模板**（`${VAR}` 替换前）、请求头的**名称**。
+- **不参与计算**：target 级的 headers 和 base_url 都不算，所以 S1、S2 可以共用同一份 suite。
+- **不一致时**：请求状态为 `inconclusive`，处理方法是 `record --only NAME` 或者 `accept`。
+
+### 8.3 accept
+- **来源与写入方式**：读取 run 目录里候选的响应和指纹，按请求合并进快照，可以用 `--only` 限定范围。快照不存在时会新建。
+- **可以接受**：状态为 `ok` 的请求，以及**只是因为指纹不一致或快照缺失**而变成 `inconclusive` 的请求。所以新增请求、改了 query 的请求，都可以直接 accept。
+- **会拒绝**：`error`、因为鉴权/限流/基线不可用/业务失败而 `inconclusive`、以及产生了 `business_error` 的请求。被拒的请求会在 stdout 里列出，退出码为 4。
+- **只有 1 个 sample**：被接受的请求只有 1 个 sample，见 §11 L4。
+
+## 9. 输出
+
+**run 目录**
+
+| 文件 | 内容 |
+|---|---|
+| `report.html` | 单个文件，不依赖外部资源；响应内容一律转义 |
+| `report.md` | 适合贴到 PR 或 IM |
+| `junit.xml` | 每条请求是一个 testcase：有达到 `--fail-on` 级别的 finding 记 failure；`error` 或 `inconclusive` 记 error |
+| `result.json` | 结构化结果，契约见 design §4，供以后的界面使用 |
+| `baseline/`、`candidate/` | 两侧响应。`candidate/` 给 `accept` 用，`baseline/` 用于排查 |
+
+**报告内容**
+1. **汇总**：请求数、各级别 finding 数、各请求状态的数量、退出码及原因。
+2. **每条请求**：
+   - 完整的请求 URL
+   - 两侧的状态码、耗时、重试次数
+   - 可以直接复现的 curl 命令（请求头的值显示为 `<redacted>`）
+   - finding 列表：具体路径、泛化路径、类型、级别、两侧的值、命中的规则
+   - 两侧 body 的对照 diff（只在 HTML 报告里有，过大时截断）
+3. **不稳定字段建议**：附带 YAML 片段。
+4. **本次未命中的规则**：
+   - **统计范围**：本次实际运行的请求。
+   - **判定**：规则在两侧的原始 body 里都没有匹配到任何路径，就算未命中。这个判定和对比模式无关。
+   - **措辞**：只提示"本次未命中"，不直接说规则已过期。
+5. **warning 列表**
+
+报告样例见 §12.2。
+
+## 10. 非功能需求
+- **语言与协议**：Python 3.12；配置用 YAML；外部交互只走 HTTP/HTTPS。
+- **代码约束**：
+  - 用 radon 检查，每个函数的等级不超过 B（CC ≤ 10）。
+  - 单个文件不超过 1000 行。
+  - 只在复杂逻辑处写注释。
+- **可扩展**：
+  - core 是纯库，以后的 Web 界面直接调用 core，不需要改动对比逻辑。
+  - core 不依赖 CLI 和报告模块。
+  - 分层与接口见 design §1。
+- **日志**：
+  - 以下关键节点必须记录：suite 加载结果、每条请求的发出和返回（target、方法、URL、状态码、耗时、重试次数）、每条请求的状态和 finding 数、汇总、文件写入路径、退出码及原因。
+  - 任何级别的日志都**不输出请求头的值**。
+  - 详细规定见 design §6。
+- **文档**：
+  - `doc/user/`：命令、suite 格式、YAML 常见坑、规则与路径、数组模式怎么选、success 和 asserts、怎么看报告、退出码。
+  - `doc/dev/`：模块职责、关键路径（只写文件名或函数名，不写行号）、主流程图、result.json 契约。
+  - `doc/spec/`：需求文档。
+  - `README.md`：产品简介和快速上手。
+
+## 11. 已知限制与风险
+
+| # | 限制 | 应对 |
+|---|---|---|
+| L1 | 基线和候选的数据源不同时，值比较几乎全部是差异，可空字段和数组长度也会频繁变化 | 默认只比结构；可空性和长度变化做了降级 |
+| L2 | 不稳定字段建议只基于 2 个 sample，低频变化的字段（按小时变、缓存、A/B 实验）会漏掉 | 只作为建议；以后可以考虑采样 N 次 |
+| L3 | 基线和候选不是同时请求的，中间数据可能发生变化 | 以结构对比为主 |
+| L4 | accept 进来的请求只有 1 个 sample，所以没有不稳定字段建议 | 需要时用 `record --only NAME` 重录 |
+| L5 | 不做脱敏，响应体会进入快照、报告和 run 目录 | 请求头的值和大部分响应头不落盘；文档提醒不要把快照和报告提交到公开的地方 |
+| L6 | schema 模式不比较单个元素的值 | 改用 keyed 模式，或者写 asserts |
+| L7 | 动态 key 的对象（例如 `{"10086": {...}}`）每次都会报字段增删 | 用 ignore；以后可以考虑 map 模式 |
+| L8 | `run` 对基线发 2 倍的请求，会给生产环境带来额外负载 | 用 `--only` 和 `concurrency` 控制 |
+| L9 | 只在候选侧不稳定的字段，建议里不会列出 | 接受这个限制 |
+| L10 | 分页列表或实时列表用 keyed 模式，会因为数据移动而持续报 `element_missing` | 这类数组用 schema 模式（文档里给出选型表） |
+| L11 | 后端用 float 输出金额、不保留末尾的 0（如 `12.5`）时，原本就是 2 位的值也可能显示成 1 位，无法判断精度是否变了 | 文档说明：decimal 规则需要后端稳定输出固定的小数位 |
+
+## 12. 端到端示例与验收
+
+### 12.1 S2 走查（使用 §5 的 suite）
+
+| 步骤 | 命令 | 预期结果 |
+|---|---|---|
+| 1 | `api-regress validate suite.yaml` | `OK, 3 requests`，退出码 0 |
+| 2 | 发版前执行 `BASE_TOKEN=… api-regress record suite.yaml --snapshot snap/` | 3 条写入；stdout 列出建议，例如 `data.server_time` 建议 ignore；退出码 0 |
+| 3a | 发版后执行 `compare`；场景：`coupon_amount` 改名为 `discount_amount` | 产生 `field_removed`（breaking）和 `field_added`（info）；退出码 1 |
+| 3b | 场景：列表里的 price 从 `12.50` 变成 `12.5` | `order-list` 产生 `scale_changed`（breaking），路径为 `data.list[*].price`，附示例下标；退出码 1 |
+| 3c | 场景：候选的 token 过期，返回 401 | 3 条请求都是 `inconclusive`，提示检查候选 token；退出码 4 |
+| 3d | 场景：列表顺序发生变化 | schema 模式下没有 finding；退出码 0 |
+| 3e | 场景：有意修改了 `order-detail` 的返回 | 执行 `accept out/<ts> --snapshot snap/ --only order-detail`；之后再 `compare`，退出码 0 |
+
+### 12.2 报告样例（Markdown 节选）
+
+```
+## 汇总  退出码 1：存在 breaking
+请求 3 | ok 3 | breaking 1 | suspicious 0 | info 1
+
+### order-detail  GET /v1/orders/10086  200 → 200
+| 级别 | 类型 | 路径 | 基线 | 候选 |
+|---|---|---|---|---|
+| breaking | field_removed | data.coupon_amount | "5.00" | (缺失) |
+| info | field_added | data.discount_amount | (缺失) | "5.00" |
+
+### 建议 ignore
+- data.server_time（基线两次的值不同）
+    - path: data.server_time
+      ignore: true
+```
+
+### 12.3 验收标准
+所有用例都用本地 mock HTTP 服务自动化执行，**mock 服务返回固定内容**。
+
+**配置与命令**
+
+| ID | 验收项 |
+|---|---|
+| AC-01 | suite 出现未知字段、写方法、重复 name，或缺少本命令需要的 `${VAR}` 时：`run` 返回 2，并指出出错行；`validate` 只把缺少的变量列为 warning |
+| AC-02 | `${VAR:-x}` 在变量未设置时取 `x`；数值字段写成 `"${T}"` 能正确转换类型 |
+| AC-03 | `record` 只用 baseline，`compare` 只用 candidate；缺少另一侧的变量时照常运行 |
+
+**结构对比**
+
+| ID | 验收项 |
+|---|---|
+| AC-04 | 字段被删除时，产生 `field_removed`（breaking），退出码 1 |
+| AC-05 | number 变成 string 时，产生 `type_changed`（breaking）。对象 `data` 变成 null 时，产生 `type_changed`（breaking），且只有这 1 条 finding |
+| AC-06 | 标量从非 null 变成 null 时，产生 `nullability_changed`（suspicious），退出码 0；配了 `nullable: true` 后不再报 |
+| AC-07 | 没有 decimal 规则时，`1` 变成 `1.0` 不产生 finding。有规则时，`12.50` 变成 `12.5` 产生 `scale_changed`。§7.5 表中每个示例的小数位都计算正确 |
+| AC-08 | `compare: structure` 下值变化不产生 finding；配了 `on_value_change: suspicious` 后产生 suspicious |
+| AC-09 | 新增字段时产生 info，退出码 0 |
+
+**状态与流程**
+
+| ID | 验收项 |
+|---|---|
+| AC-10 | 200 变成 500 时，只产生 `status_changed`（breaking），不再出现 body 和 success 相关的 finding |
+| AC-11 | 基线返回 500 或 401、或候选返回 401 时，请求为 `inconclusive`，退出码 4 |
+| AC-12 | 没有配 `success` 时，两侧都返回 404：请求为 `ok` 并产生 warning，退出码 0 |
+| AC-13 | 一侧返回 JSON、另一侧返回 HTML 时，产生 breaking。两侧都返回 HTML 时，请求为 `unsupported`，退出码 0 |
+| AC-14 | 连接被拒绝时，重试 1 次后请求为 `error`，其余请求照常执行，退出码 4 |
+| AC-15 | 同一次运行里既有 breaking 又有 error 时，退出码为 1；同时存在配置错误时，退出码为 2 |
+
+**数组**
+
+| ID | 验收项 |
+|---|---|
+| AC-16 | 数组顺序打乱：keyed 模式不产生 finding；`compare: values` 下用 positional 模式会产生 `value_changed`；`compare: structure` 下用 positional 模式，如果元素结构相同，不产生 finding |
+| AC-17 | keyed 模式下 key 重复时，降级为 schema 模式并产生 warning；finding 的路径格式为 `[k=v]` |
+| AC-18 | schema 模式下，候选的所有元素都缺少某个字段时，产生 `field_removed`；候选数组为空时，只产生 `array_length_changed`，外加 warning |
+| AC-19 | schema 模式加 decimal 规则：`items[*].price` 出现 1 位小数时，产生 `scale_changed`，并附带示例下标 |
+| AC-20 | positional 模式下候选多出 2 个元素时，产生 2 条 `element_added` 和 1 条 `array_length_changed` |
+
+**规则**
+
+| ID | 验收项 |
+|---|---|
+| AC-21 | `ignore` 会作用到整棵子树。请求级的 `ignore: false` 能覆盖全局的 `**.x: ignore`。父节点已经被 ignore 时，子节点的 `ignore: false` 不生效，并产生 warning |
+| AC-22 | §6.3 的两个示例，以及优先级比较的每一项，各有一个用例，全部通过 |
+
+**success 与 asserts**
+
+| ID | 验收项 |
+|---|---|
+| AC-23 | 候选返回 `200 {code:500}` 时，产生 `business_error`，不再有 body 相关的 finding。基线不满足 success 时，请求为 `inconclusive`。success 表达式抛异常时，视为不满足并产生 warning。HEAD 请求跳过 success |
+| AC-24 | assert 为假时，产生 `assert_failed`；抛异常时，产生 `assert_error`，其余 assert 照常执行 |
+| AC-25 | `cand.body.data.items` 取到的是字段值，而不是 dict 方法；`x.items[0]` 和 Decimal 的运算结果正确；`__import__`、`x._y`、`obj.method()` 在 `validate` 阶段就被拒绝 |
+
+**快照与 accept**
+
+| ID | 验收项 |
+|---|---|
+| AC-26 | 先 `record` 再 `compare` 同一个固定的服务，结果是 0 条 finding |
+| AC-27 | 修改了 query：`compare` 时该请求为 `inconclusive`；对它执行 `accept` 后再 `compare`，结果是 0 条 finding。新增一条请求时，结果同样如此 |
+| AC-28 | `record --only A` 只更新 A，其他请求保持不变；`record` 过程中失败的请求保留旧的 sample，退出码 4 |
+| AC-29 | `accept --only A` 只更新 A；状态为 error 的请求会被拒绝，退出码 4 |
+
+**输出**
+
+| ID | 验收项 |
+|---|---|
+| AC-30 | 基线两次请求中，值不同的字段和只出现一次的对象字段都会列入建议；数组元素数量的增减不会列入；建议给出的 YAML 能被正常解析；这些字段不会被自动忽略 |
+| AC-31 | "本次未命中的规则"只列出真正没命中的规则；写在 schema 数组元素上、已经命中的规则不会出现在这里 |
+| AC-32 | 响应里有 `<script>` 时，`report.html` 中会被转义 |
+| AC-33 | `junit.xml` 能被标准解析器读取，failure 和 error 的数量符合 §9 的定义 |
+| AC-34 | `result.json` 能通过仓库里已提交的 JSON Schema 校验；同一个差异在两次运行中的 `finding_id` 相同；keyed 数组中不同元素的 finding_id 互不相同 |
+
+**日志与工程**
+
+| ID | 验收项 |
+|---|---|
+| AC-35 | INFO 日志包含 §10 列出的全部节点。在请求头里放一个哨兵 token，它不会出现在 stderr、日志文件、快照、run 目录和报告的任何地方 |
+| AC-36 | `radon cc -n C src/` 没有输出；`src/` 下没有超过 1000 行的文件；import-linter 检查通过 |
+
+## 13. 决策记录与待定问题
+
+| # | 问题 | 状态 |
+|---|---|---|
+| D1 | 新增 `success` 业务成功条件（§7.3），用于发现"返回 200 但 body 里是业务错误"的情况 | 已确认（2026-11-09） |
+| D2 | 标量在 null 与非 null 之间变化，记为 `nullability_changed`（suspicious/info）；对象或数组变成 null 仍记 breaking | 已确认（2026-11-09） |
+| D3 | `array_length_changed` 默认记 info，只有空与非空之间的变化记 suspicious | 已确认（2026-11-09） |
+| D4 | 文档拆成需求本体和 `spec-v1-design.md` 两份 | 已确认（2026-11-09） |
+| D5 | CLI 框架用 argparse 还是 Typer | 实现时再定 |

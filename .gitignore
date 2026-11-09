@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# api-regress 运行产物
+api-regress-out/
+
+# 本地环境与密钥
+.env
+.env.*
+
+# 系统
+.DS_Store
