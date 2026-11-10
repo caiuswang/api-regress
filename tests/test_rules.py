@@ -23,7 +23,7 @@ def k(*names):
     return tuple(Key(n) if isinstance(n, str) else n for n in names)
 
 
-# ---------- spec §6.3 的两个示例 ----------
+# ---------- 规则合并的两个典型例子（doc/user/suite.md） ----------
 
 
 def test_example_attributes_merge():
@@ -195,7 +195,7 @@ def test_value_rule_in_keyed_array_ok():
 
 
 def test_value_rule_in_unordered_array_warns():
-    """D13：unordered 的元素也没有逐个配对，元素字段上的 on_value_change 不生效。"""
+    """unordered 的元素也没有逐个配对，元素字段上的 on_value_change 不生效。"""
     suite = make_suite(
         request_rules=[
             {"path": "data.tags", "array": {"mode": "unordered"}},
@@ -211,7 +211,7 @@ def test_value_rule_in_unordered_array_warns():
     ids=["schema", "unordered", "keyed", "positional"],
 )
 def test_nested_array_rule_in_schema_warns(outer, warned):
-    """D14：schema 数组元素里的数组，非 schema 的 array 规则不生效。"""
+    """schema 数组元素里的数组，非 schema 的 array 规则不生效。"""
     rules = [{"path": "data.list[*].sub", "array": {"keys": ["id"]}}]
     if outer:
         rules.insert(0, {"path": "data.list", "array": outer})
@@ -231,7 +231,7 @@ def test_warning_carries_location_and_line():
 
 
 @pytest.mark.parametrize("path", ["**.updated_at", "data.items[*].price", 'meta["x.y"]'])
-def test_spec_paths_have_no_static_warning(path):
+def test_documented_paths_have_no_static_warning(path):
     assert codes(make_suite([{"path": path, "ignore": True}])) == []
 
 
@@ -289,7 +289,7 @@ def test_request_ignore_does_not_flag_global_rule():
 
 
 def test_rule_on_ignored_node_itself_warns():
-    """D9：全局 ** 忽略，请求级在同一节点配了值比较却没写 ignore: false。"""
+    """全局 ** 忽略，请求级在同一节点配了值比较却没写 ignore: false。"""
     suite = make_suite([{"path": "**.updated_at", "ignore": True}], [{"path": "data.updated_at", "on_value_change": "breaking"}])
     [w] = static_warnings(suite)
     assert (w.code, w.path, w.request) == ("rule_under_ignored", "data.updated_at", "r")

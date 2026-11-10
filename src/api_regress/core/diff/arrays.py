@@ -1,4 +1,4 @@
-"""数组对齐：schema / keyed / positional / unordered 四种模式（spec §7.6）。"""
+"""数组对齐：schema / keyed / positional / unordered 四种模式。"""
 
 from __future__ import annotations
 
@@ -127,7 +127,7 @@ def _canon_at(ctx: DiffContext, path: Path, value: Any) -> Any:
 
 
 def _unordered(ctx: DiffContext, path: Path, base: list, cand: list, res: Resolved) -> None:
-    """元素结构按 schema 比较；值按多重集合比较，不相等时在数组路径上记一条 value_changed（D13）。"""
+    """元素结构按 schema 比较；值按多重集合比较，不相等时在数组路径上记一条 value_changed。"""
     elem = (*path, paths.ANY)
     if ctx.resolve(elem).ignore:
         return

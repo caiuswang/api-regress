@@ -1,4 +1,4 @@
-"""success / asserts 表达式：AST 白名单编译 + simpleeval 求值（spec §7.3、§7.7）。
+"""success / asserts 表达式：AST 白名单编译 + simpleeval 求值。
 
 安全边界由 compile_expr 的白名单保证，求值器再做一层兜底：
 - 只允许白名单里的语法节点、变量名，函数调用的目标只能是内置函数名，参数个数也要对；

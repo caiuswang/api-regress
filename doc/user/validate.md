@@ -12,7 +12,7 @@ api-regress validate <suite.yaml> [--log-level LEVEL] [--log-file FILE]
 - 请求 `name`：只能包含 `A-Z a-z 0-9 _ . -`，并且不能重复。**区分大小写**：`order-list` 和 `Order-List` 是两条请求，但在 macOS、Windows 上它们的快照文件会互相覆盖，不要这样起名
 - `method`：只能是 `GET` 或 `HEAD`，写方法（POST/PUT/PATCH/DELETE）一律报错
 - `base_url`：必须是 `http://` 或 `https://` 开头的完整地址（值来自缺失变量的那一侧除外）
-- 规则：路径语法；至少写一个属性；`array` 的 `mode` 与 `keys` 是否一致
+- 规则：路径语法（见 [suite.md](suite.md)）；至少写一个属性；`array` 的 `mode` 与 `keys` 是否一致
 - `success` 和 `asserts` 表达式：语法、变量名、函数名、参数个数是否在白名单里，见 [expressions.md](expressions.md)。表达式原文引用了没有设置的环境变量时，跳过这条表达式，设置后再检查
 - 环境变量：写法无法识别时报错；缺少的变量**不报错**，按 target 列成 warning
 
@@ -59,11 +59,6 @@ INVALID, 2 error(s)
 - 数值字段也可以写成字符串形式，例如 `timeout: "${TIMEOUT:-10}"`，会自动转换成数字。
 - 每个命令只要求它用到的那一侧：`targets.baseline` 下的变量只有 baseline 需要，`targets.candidate` 同理；`defaults` 和 `requests` 里的变量两侧都需要。`validate` 不要求任何一侧。
 
-## 规则的几个约定
-
-- 每条规则至少要写一个属性（`ignore`、`decimal`、`scale_level`、`on_value_change`、`array`、`nullable`），只写 `path` 会报错。
-- 请求级的 `success` 覆盖 defaults 里的；写成 `success: null` 表示这条请求不判定 success（例如 `/health` 这类 body 里没有业务码的接口）。
-
 ## YAML 常见坑
 
 | 写法 | YAML 实际解析成 | 正确写法 |
@@ -75,15 +70,6 @@ INVALID, 2 error(s)
 
 `query` 和 `headers` 的值必须是字符串，没加引号的数字、布尔值、日期都会被 `validate` 报出来，而不会悄悄变成别的值。
 
-## 路径写法速查
+## 规则与路径
 
-| 写法 | 含义 |
-|---|---|
-| `data.items` | 逐级访问对象 key，开头不写 `$` |
-| `data.items[0]` | 数组下标，只在 positional 模式下生效 |
-| `data.items[*].price` | 任意数组元素 |
-| `meta["x.y"]` | key 里有 `.`、`[`、`]`、`"`、`*`、空白，或以 `$` 开头时用引号括起来；引号内用 `\"`、`\\` 转义 |
-| `**.updated_at` | 任意深度（包括 0 层）。`**` 不能放在末尾，也不能连续写两个 |
-| `$` | 根节点本身，只能单独写。响应体本身是数组时，用 `path: "$"` 配 `array`，元素写 `[*].price` |
-
-规则的优先级和合并方式见 [spec §6.3](../spec/spec-v1.md)。
+字段含义、路径写法、规则怎么合并，见 [suite.md](suite.md)。

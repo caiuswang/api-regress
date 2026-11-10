@@ -2,7 +2,7 @@
 
 `success` 和 `asserts` 都是写在 YAML 里的一行表达式，语法是 Python 表达式的一个很小的子集。`validate` 和每次运行开始前都会检查，不合法时退出码为 2，并指出出错的列。
 
-> `success` 判定和 asserts 的执行流程在 `run` 命令里生效（T4），本页只说明表达式本身怎么写。
+> `success` 判定和 asserts 的执行要等 `run` / `compare` 命令实现后才生效，本页只说明表达式本身怎么写。各种组合下的实际结果见 [expr-combinations.md](../dev/expr-combinations.md)。
 
 ## success：业务是否成功
 
@@ -87,7 +87,7 @@ asserts:
 | `abs(x)` | 1 | 数字的绝对值 |
 | `min(...)`、`max(...)` | 至少 1 | 一个参数时取其中的元素；元素必须全是数字或全是字符串，不能为空、不能有 NaN |
 
-`get` / `exists` 的路径和规则路径写法一样（`data.items[0].price`、`meta["x.y"]`），但不能用 `[*]` 和 `**`。第一个参数可以是 body 里的对象/数组、列表字面量、`keys()` 的结果、`headers`，或者 `base`/`cand`。
+`get` / `exists` 的路径和[规则路径](suite.md#路径写法)写法一样（`data.items[0].price`、`meta["x.y"]`），但不能用 `[*]` 和 `**`。第一个参数可以是 body 里的对象/数组、列表字面量、`keys()` 的结果、`headers`，或者 `base`/`cand`。
 
 ### 支持的语法
 

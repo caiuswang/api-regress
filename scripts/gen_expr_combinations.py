@@ -7,7 +7,7 @@ tests/test_expr_combinations.py 会重新生成并和仓库里的文件比较，
 加新的语法、函数、运算符或类型时：
 1. 在下面的 OPERANDS / BINOPS / FUNCS1 / ACCESS / TRUTHY / CONTEXT 里加上对应的维度；
 2. 运行 `uv run python scripts/gen_expr_combinations.py`；
-3. 用 `git diff doc/dev/expr-combinations.md` 逐格检查变化是否符合 spec §7.7。
+3. 用 `git diff doc/dev/expr-combinations.md` 逐格检查变化是否符合预期（用户可见的规则见 doc/user/expressions.md）。
 """
 
 from __future__ import annotations
@@ -332,7 +332,7 @@ HEADER = """# 表达式组合表
 
 > **本文件由 `scripts/gen_expr_combinations.py` 生成，不要手改。**
 > 每个格子都是真正运行 `compile_expr` 和求值的结果。`tests/test_expr_combinations.py` 会重新生成并比较：
-> 表达式行为一变，测试就失败。确认变化符合 spec §7.7 后，运行 `uv run python scripts/gen_expr_combinations.py`
+> 表达式行为一变，测试就失败。确认变化符合预期后，运行 `uv run python scripts/gen_expr_combinations.py`
 > 更新本文件，并在 review 时逐格检查 `git diff`。加新的语法、函数或运算符时，先在脚本里加上对应的维度。
 > 同一个测试还会检查一组不变量：`==` 对称、`==` 与 `!=` 互补、`in` 与 `not in` 互补、大小比较反对称、
 > 字面量和同值字段结果一致、错误信息里没有 Python 原生异常和类型名。

@@ -2,7 +2,7 @@
 
 > **本文件由 `scripts/gen_diff_combinations.py` 生成，不要手改。**
 > 每个格子都是真正运行 `diff_json` / `load_body` 的结果。`tests/test_diff_combinations.py` 会重新生成并比较：
-> 对比行为一变，测试就失败。确认变化符合 spec 后，运行 `uv run python scripts/gen_diff_combinations.py` 更新本文件，
+> 对比行为一变，测试就失败。确认变化符合预期后，运行 `uv run python scripts/gen_diff_combinations.py` 更新本文件，
 > 并在 review 时逐格检查 `git diff`。加新的条件分支时，先在脚本里加上对应的维度或场景。
 
 ## 怎么读

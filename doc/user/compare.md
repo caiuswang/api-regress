@@ -1,7 +1,7 @@
 # 对比规则：会报出哪些差异
 
 > 本页说明 body 怎么比较、各种差异的含义和级别，以及规则怎么影响结果。
-> `run` / `compare` 命令还在开发中（见 [任务进度](../spec/spec-v1-tasks.md)），对比引擎本身已经实现。行为以 [spec §7](../spec/spec-v1.md) 为准。
+> `run` / `compare` 命令还在开发中，对比引擎本身已经实现。各种组合下的实际输出见 [diff-combinations.md](../dev/diff-combinations.md)。
 
 ## 默认只比结构
 
@@ -22,7 +22,7 @@
 
 几点说明：
 
-- **数字类型**：`1` 和 `1.0` 都是数字，不算类型变化；值比较时也相等。
+- **数字类型**：`1` 和 `1.0` 都是数字，不算类型变化；值比较时也相等。`NaN` 和 `NaN` 在值比较时视为相等。
 - **只报最高层**：一个对象被删除，或者变成了别的类型（包括 `null`），只在这个对象上报一条，不再列出它下面的每个字段。
 - **变成 null 又配了值比较**：比如 `data.amount` 配了 `on_value_change: breaking`，`12.50` → `null` 会报两条：`nullability_changed`（suspicious）和 `value_changed`（breaking）。所以 `--fail-on breaking` 能拦住它。
 - **两侧值看起来一样的 `type_changed`**：`12.50` → `"12.50"` 在报告里两侧的值都显示成 `12.50`，看 finding 的 `base_type` / `cand_type`（`number` → `string`）区分。
@@ -38,7 +38,7 @@
 
 ## 规则
 
-规则写在 `defaults.rules`（所有请求）或请求自己的 `rules` 里，路径写法见 [validate.md](validate.md) 的「路径写法速查」。
+规则写在 `defaults.rules`（所有请求）或请求自己的 `rules` 里，路径写法和多条规则怎么合并见 [suite.md](suite.md)。
 
 | 属性 | 作用 |
 |---|---|
@@ -49,7 +49,9 @@
 | `nullable: true` | 声明这个字段可以是 `null`：标量与 `null` 之间不再报 `nullability_changed`，对象、数组与 `null` 之间也不再报 `type_changed`。两个非 null 类型之间（如对象变字符串）照常报。配了值比较时，`value_changed` 照常报 |
 | `array` | 数组怎么对齐，见下一节 |
 
-小数位按 JSON 原文计算：`1.10` 是 2 位，`1` 是 0 位，`1.50E1` 是 1 位，`1E2` 是 0 位。后端如果用浮点数输出金额、不保留末尾的 0，decimal 规则就判断不了精度（spec §11 L11）。
+小数位按 JSON 原文计算：`1.10` 是 2 位，`1` 是 0 位，`1.50E1` 是 1 位，`1E2` 是 0 位，`-0.00` 是 2 位。只配 `decimal` 不比较数值本身，要比值还得配 `on_value_change`。
+
+后端如果用浮点数输出金额、不保留末尾的 0（`12.50` 输出成 `12.5`），原本就是 2 位的值也会显示成 1 位，decimal 规则就判断不了精度是否变了。decimal 规则要求后端稳定地输出固定的小数位。
 
 ## 数组怎么选模式
 
@@ -106,3 +108,14 @@
 | `array_degraded_to_schema` | keyed 数组对齐失败，降级为 schema 模式 |
 | `array_empty` | schema / unordered 数组（或 schema 元素里的内层数组）一侧为空、另一侧非空，没有比较元素结构 |
 | `rule_ineffective_in_schema` | 值比较落在 schema 或 unordered 数组的元素内部，或者配对规则写在 schema 元素的内层数组上，不生效 |
+
+## 已知限制
+
+| 限制 | 应对 |
+|---|---|
+| 基线和候选的数据源不同（比如预发和生产）时，值比较几乎全是差异，可空字段和数组长度也会频繁变化 | 默认只比结构；可空性和长度变化的级别已经调低 |
+| 基线和候选不是同时请求的，中间数据可能变了 | 以结构对比为主 |
+| schema 模式不比较单个元素的值 | 改用 keyed 模式，或者写 [asserts](expressions.md) |
+| key 是动态值的对象（例如 `{"10086": {...}}`）每次都会报字段增删 | 用 `ignore` 忽略这个对象 |
+| 分页列表、实时列表用 keyed 模式，数据一移动就持续报 `element_missing` | 这类数组用 schema 模式 |
+| 后端用浮点数输出金额、不保留末尾的 0 | decimal 规则判断不了精度，见上文「规则」 |

@@ -6,7 +6,7 @@ targets:
     headers:
       Authorization: "Bearer ${BASE_TOKEN}"
   candidate:
-    base_url: https://api.shop.example.com      # S2：两侧可以是同一个地址
+    base_url: https://api.shop.example.com      # 只有一个环境时，两侧可以是同一个地址
     headers:
       Authorization: "Bearer ${CAND_TOKEN}"
 
@@ -15,7 +15,7 @@ defaults:
   concurrency: 4
   retries: 1           # 只对连接错误和超时重试，任何状态码都不重试
   compare: structure   # structure | values
-  success: "body.code == 0"      # 只对 JSON 响应求值，见 §7.3
+  success: "body.code == 0"      # 只对 JSON 响应求值
   headers:
     Accept: application/json
   rules:

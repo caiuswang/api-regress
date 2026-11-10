@@ -31,7 +31,7 @@ def errors(text, sides=("baseline", "candidate"), env=None):
     return info.value.issues
 
 
-def test_spec_example_loads():
+def test_shop_example_loads():
     loaded = load_suite(FIXTURE, sides=("baseline", "candidate"), env=ENV)
     suite = loaded.suite
     assert [r.name for r in suite.requests] == ["health", "order-list", "order-detail"]
@@ -47,7 +47,7 @@ def test_spec_example_loads():
     assert loaded.raw["targets"]["baseline"]["headers"]["Authorization"] == "Bearer ${BASE_TOKEN}"
 
 
-# ---------- AC-01 ----------
+# ---------- 配置错误：未知字段、写方法、重复 name、缺变量 ----------
 
 
 def test_unknown_field_reports_line():
@@ -110,7 +110,7 @@ def test_missing_var_only_recorded_when_not_needed():
 
 
 def test_missing_var_other_side_ignored():
-    """AC-03 的配置部分：record 只需要 baseline，候选缺变量照常加载。"""
+    """record 只需要 baseline，候选缺变量照常加载。"""
     text = MINI.replace("http://cand", "${CAND_URL}")
     loaded = load(text, sides=("baseline",))
     assert loaded.suite.targets.candidate.base_url == "${CAND_URL}"
@@ -191,7 +191,7 @@ def test_root_rule_path():
     assert rule.tokens == ()
 
 
-# ---------- AC-02 ----------
+# ---------- ${VAR:-default} 与数值字段的类型转换 ----------
 
 
 def test_default_value_when_unset():
@@ -371,7 +371,7 @@ def test_version_from_var():
     assert "只支持 1" in errors(MINI.replace("version: 1", "version: 2"))[0].message
 
 
-# ---------- success 覆盖（D6） ----------
+# ---------- success 覆盖：请求级 null 表示不判定 ----------
 
 
 def test_request_success_null_disables_default():
@@ -382,7 +382,7 @@ def test_request_success_null_disables_default():
 
 
 def test_names_are_case_sensitive():
-    """D8：只差大小写的 name 是两条请求。"""
+    """name 查重区分大小写：只差大小写的 name 是两条请求。"""
     text = MINI + "  - name: A\n    method: GET\n    path: /b\n"
     assert [r.name for r in load(text).suite.requests] == ["a", "A"]
 

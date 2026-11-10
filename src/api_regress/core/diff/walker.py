@@ -1,4 +1,4 @@
-"""body 对比入口：按 JSON 类型分发，只报最高层节点（spec §7.4、§7.5）。"""
+"""body 对比入口：按 JSON 类型分发，只报最高层节点。"""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def _presence(ctx: DiffContext, path: Path, base: Any, cand: Any, presence: Pres
 
 
 def _type_mismatch(ctx: DiffContext, path: Path, base: Any, cand: Any, res: Resolved) -> None:
-    """一个节点只报一条结构类 finding，不再展开子节点（spec §7.4、D10、D12）。"""
+    """一个节点只报一条结构类 finding，不再展开子节点；值类 finding 可以叠加。"""
     kinds = {json_type(base), json_type(cand)}
     if "null" not in kinds:
         ctx.report("type_changed", "breaking", path, base, cand, res)

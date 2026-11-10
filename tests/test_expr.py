@@ -47,7 +47,7 @@ def rejected(source, kind="assert"):
     return str(info.value)
 
 
-# ---------- AC-25：JsonView、字面量 ----------
+# ---------- JsonView、字面量 ----------
 
 
 @pytest.mark.parametrize(
@@ -221,7 +221,7 @@ def test_bool_field_is_fine():
     assert not out.passed and out.error is None
 
 
-# ---------- AC-24：assert 为假 / 抛异常 ----------
+# ---------- assert 为假 / 抛异常 ----------
 
 
 def test_assert_false_has_no_error():
@@ -303,7 +303,7 @@ def test_loop_variable_out_of_scope(source):
     assert "未知的变量" in rejected(source, "success")
 
 
-# ---------- 静态拒绝（AC-25 + 恶意用例） ----------
+# ---------- 静态拒绝（含恶意用例） ----------
 
 
 @pytest.mark.parametrize(
@@ -558,7 +558,7 @@ def test_non_string_expression_left_to_pydantic():
     assert [i.location for i in info.value.issues] == ["requests[0].success"]
 
 
-# ---------- 组合矩阵发现的问题（spec §7.7、D16） ----------
+# ---------- 组合矩阵发现的问题：布尔值、生成器、base/cand 的语义 ----------
 
 TYPED = {"t": True, "f": False, "z": 0, "i": 3, "s": "ab", "a": [1, 2], "o": {"k": 1}, "nan": Decimal("NaN"),
          "inf": Decimal("Infinity"), "ea": []}

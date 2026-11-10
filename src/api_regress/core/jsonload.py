@@ -1,4 +1,4 @@
-"""解析响应 body：判断是否为 JSON，数字用 Decimal，记录重复 key 和 NaN/Infinity（spec §7.2）。"""
+"""解析响应 body：判断是否为 JSON，数字用 Decimal，记录重复 key 和 NaN/Infinity。"""
 
 from __future__ import annotations
 

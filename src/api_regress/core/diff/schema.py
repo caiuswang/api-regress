@@ -1,6 +1,6 @@
 """schema 数组：把所有元素合并成一张扁平表（泛化路径 → 类型集合、小数位集合），只比较两侧的表和长度。
 
-unordered 模式也用这里的 `compare_elements` 比较元素结构（spec §7.6、D13）。"""
+unordered 模式也用这里的 `compare_elements` 比较元素结构。"""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ Table = dict[Path, Column]
 
 
 def length_level(base: list, cand: list) -> Level:
-    """空 ↔ 非空：suspicious；其他长度变化：info（spec D3）。"""
+    """空 ↔ 非空：suspicious；其他长度变化：info。"""
     return "suspicious" if bool(base) != bool(cand) else "info"
 
 
@@ -74,7 +74,7 @@ def _collect(ctx: DiffContext, path: Path, value: Any, index: int, table: Table)
 
 
 def build_table(ctx: DiffContext, elem_path: Path, items: list) -> Table:
-    """元素里嵌套的数组也按 schema 方式并入同一张表；index 始终是外层数组的下标（D14）。"""
+    """元素里嵌套的数组也按 schema 方式并入同一张表；index 始终是外层数组的下标。"""
     table: Table = {}
     for i, item in enumerate(items):
         _collect(ctx, elem_path, item, i, table)
@@ -172,7 +172,7 @@ def _rule_path(ctx: DiffContext, res: Resolved, attr: str) -> str:
 
 
 def _warn_rules(ctx: DiffContext, path: Path, table: Table, schema_mode: bool) -> None:
-    """元素没有逐个配对：值规则不生效；schema 模式下内层数组的非 schema array 规则也不生效（spec §7.6、D13、D14）。
+    """元素没有逐个配对：值规则不生效；schema 模式下内层数组的非 schema array 规则也不生效。
 
     unordered 自己按多重集合比较值，内层数组的 positional 规则在那里仍然有用，所以不提示。"""
     where = ctx.where(path)

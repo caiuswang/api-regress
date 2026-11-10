@@ -481,7 +481,7 @@ def _expr_fields(data: Any) -> list[tuple[Loc, Any, expr.ExprKind]]:
 
 
 def _expr_issues(data: Any, ctx: _Ctx, unresolved: set[Loc]) -> list[ConfigIssue]:
-    """表达式白名单检查（spec §7.7）。原文含缺失变量的跳过，设置变量后再查；类型不对的交给 pydantic 报。"""
+    """表达式白名单检查。原文含缺失变量的跳过，设置变量后再查；类型不对的交给 pydantic 报。"""
     issues = []
     for loc, source, kind in _expr_fields(data):
         if not isinstance(source, str) or loc in unresolved:

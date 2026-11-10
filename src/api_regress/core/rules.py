@@ -1,4 +1,4 @@
-"""规则合并：同一节点被多条规则匹配时，每个属性单独选出胜者（spec §6.3）。"""
+"""规则合并：同一节点被多条规则匹配时，每个属性单独选出胜者（优先级见 doc/user/suite.md）。"""
 
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ def _ignorers(rule: CompiledRule, context: Sequence[CompiledRule]) -> list[Compi
 def _ignored_by(rule: CompiledRule, context: Sequence[CompiledRule]) -> tuple[CompiledRule, bool] | None:
     """返回 (生效的 ignore 规则, 是否就是规则所在节点本身)。
 
-    检查所有严格前缀（含根节点）；规则自己没写 ignore 时，也检查它所在的节点本身（spec §6.3、D9）。"""
+    检查所有严格前缀（含根节点）；规则自己没写 ignore 时，也检查它所在的节点本身。"""
     ignorers = _ignorers(rule, context)
     last = len(rule.tokens) + (1 if rule.rule.ignore is None else 0)
     for k in range(last):

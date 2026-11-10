@@ -11,7 +11,7 @@ from api_regress.core.jsonload import MAX_DEPTH, charset_of, is_json_media, load
     [("1.10", 2), ("1.1", 1), ("1", 0), ("1.50E1", 1), ("1E2", 0), ("-0.00", 2), ("0.5e-3", 4), ("-7", 0)],
 )
 def test_scale_from_raw_text(text, expected):
-    """spec §7.5 的小数位表（AC-07）。"""
+    """小数位按 JSON 原文计算。"""
     value, _ = parse_json(text)
     assert scale(value) == expected
 

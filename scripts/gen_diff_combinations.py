@@ -6,7 +6,7 @@ tests/test_diff_combinations.py 会重新生成并和仓库里的文件比较，
 加新的条件分支（新的规则属性、数组模式、finding 类型等）时：
 1. 在下面的 RULE_SETS / CONTEXTS / ARRAY_SCENARIOS / BODY_CASES 里加上对应的维度或场景；
 2. 运行 `uv run python scripts/gen_diff_combinations.py`；
-3. 用 `git diff doc/dev/diff-combinations.md` 逐格检查变化是否符合 spec。
+3. 用 `git diff doc/dev/diff-combinations.md` 逐格检查变化是否符合预期（用户可见的规则见 doc/user/compare.md）。
 """
 
 from __future__ import annotations
@@ -233,7 +233,7 @@ HEADER = """# 对比引擎组合表
 
 > **本文件由 `scripts/gen_diff_combinations.py` 生成，不要手改。**
 > 每个格子都是真正运行 `diff_json` / `load_body` 的结果。`tests/test_diff_combinations.py` 会重新生成并比较：
-> 对比行为一变，测试就失败。确认变化符合 spec 后，运行 `uv run python scripts/gen_diff_combinations.py` 更新本文件，
+> 对比行为一变，测试就失败。确认变化符合预期后，运行 `uv run python scripts/gen_diff_combinations.py` 更新本文件，
 > 并在 review 时逐格检查 `git diff`。加新的条件分支时，先在脚本里加上对应的维度或场景。
 
 ## 怎么读

@@ -1,4 +1,4 @@
-"""AC-36 中能在 pytest 里检查的部分；radon 和 lint-imports 在 CI 里直接执行。"""
+"""工程约束中能在 pytest 里检查的部分；radon 和 lint-imports 在 CI 里直接执行。"""
 
 from pathlib import Path
 

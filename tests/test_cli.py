@@ -23,8 +23,8 @@ def _reset_logging():
     logger.propagate = propagate
 
 
-def test_validate_spec_example(monkeypatch, capsys):
-    """spec §12.1 第 1 步：OK, 3 requests，退出码 0。"""
+def test_validate_shop_example(monkeypatch, capsys):
+    """示例 suite：OK, 3 requests，退出码 0。"""
     monkeypatch.setenv("BASE_TOKEN", "b")
     monkeypatch.setenv("CAND_TOKEN", "c")
     assert main(["validate", str(FIXTURE)]) == 0
@@ -34,7 +34,7 @@ def test_validate_spec_example(monkeypatch, capsys):
 
 
 def test_validate_lists_missing_vars_per_target(monkeypatch, capsys):
-    """AC-01：validate 只把缺少的变量列为 warning，并按 target 分开。"""
+    """validate 只把缺少的变量列为 warning，并按 target 分开。"""
     monkeypatch.delenv("BASE_TOKEN", raising=False)
     monkeypatch.delenv("CAND_TOKEN", raising=False)
     assert main(["validate", str(FIXTURE)]) == 0
@@ -66,7 +66,7 @@ def test_validate_rule_warning_has_line(tmp_path, capsys, monkeypatch):
 
 
 def test_header_values_never_logged(tmp_path, monkeypatch, capsys):
-    """AC-35 的 validate 部分：请求头里的哨兵 token 不出现在 stdout、stderr、日志文件。"""
+    """请求头里的哨兵 token 不出现在 stdout、stderr、日志文件。"""
     monkeypatch.setenv("BASE_TOKEN", SENTINEL)
     monkeypatch.setenv("CAND_TOKEN", SENTINEL)
     log_file = tmp_path / "run.log"
@@ -158,7 +158,7 @@ def test_click_exceptions_inside_command_keep_click_semantics(monkeypatch, capsy
 
 
 def test_sentinel_not_leaked_on_success_path(tmp_path, monkeypatch, capsys):
-    """AC-35 的 validate 部分（成功路径）：带缺失变量 warning 和规则 warning 时也不泄露。"""
+    """成功路径：带缺失变量 warning 和规则 warning 时也不泄露。"""
     monkeypatch.setenv("BASE_TOKEN", SENTINEL)
     monkeypatch.delenv("CAND_TOKEN", raising=False)
     log_file = tmp_path / "ok.log"

@@ -11,7 +11,7 @@
 
 差异分为 **breaking / suspicious / info** 三级，结果输出成报告，同时给出 CI 可直接使用的退出码。
 
-> 项目还在开发中，当前进度见 [doc/spec/spec-v1-tasks.md](doc/spec/spec-v1-tasks.md)。下面的用法和格式以 [v1 需求](doc/spec/spec-v1.md) 为准。
+> 项目还在开发中：目前可用的是 `validate` 命令和对比、表达式引擎本身；`run`、`record`、`compare`、`accept` 和报告尚未实现。下面的用法是设计好的目标形态。
 
 ## 适用场景
 
@@ -41,7 +41,7 @@
 
 ## 快速上手
 
-写一个 `suite.yaml`：
+写一个 `suite.yaml`（完整字段见 [doc/user/suite.md](doc/user/suite.md)）：
 
 ```yaml
 version: 1
@@ -101,11 +101,9 @@ api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-de
 
 | 文档 | 内容 |
 |---|---|
-| [doc/spec/spec-v1.md](doc/spec/spec-v1.md) | v1 需求（行为以它为准） |
-| [doc/spec/spec-v1-design.md](doc/spec/spec-v1-design.md) | 技术设计约束 |
-| [doc/spec/spec-v1-tasks.md](doc/spec/spec-v1-tasks.md) | 任务拆分与进度 |
-| [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、环境变量、YAML 常见坑、路径写法 |
-| [doc/user/compare.md](doc/user/compare.md) | 对比规则：差异类型与级别、规则属性、数组模式怎么选 |
+| [doc/user/suite.md](doc/user/suite.md) | suite 配置格式：完整示例、字段、路径写法、规则怎么合并 |
+| [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、warning、环境变量、YAML 常见坑 |
+| [doc/user/compare.md](doc/user/compare.md) | 对比规则：差异类型与级别、规则属性、数组模式怎么选、已知限制 |
 | [doc/user/expressions.md](doc/user/expressions.md) | `success` 与 `asserts` 表达式的写法、内置函数、不支持的语法 |
 | [doc/dev/architecture.md](doc/dev/architecture.md) | 模块职责、关键路径、主流程（随实现补充） |
 | [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md) | 对比引擎在各种组合下的实际输出（自动生成） |

@@ -1,4 +1,4 @@
-"""对比引擎的表驱动用例：输入两段 JSON 加规则，断言 finding 列表（spec §7.4 ~ §7.6）。"""
+"""对比引擎的表驱动用例：输入两段 JSON 加规则，断言 finding 列表。"""
 
 import json
 
@@ -37,7 +37,7 @@ def codes(result):
 
 
 CASES = [
-    # --- AC-04 / AC-09：字段增删 ---
+    # --- 字段增删 ---
     ("field_removed", '{"a": 1, "b": 2}', '{"a": 1}', {}, [("field_removed", "breaking", "b")]),
     ("field_added", '{"a": 1}', '{"a": 1, "b": 2}', {}, [("field_added", "info", "b")]),
     (
@@ -48,7 +48,7 @@ CASES = [
         [("field_removed", "breaking", "data.coupon_amount"), ("field_added", "info", "data.discount_amount")],
     ),
     ("object_removed_only_top", '{"d": {"x": 1, "y": {"z": 2}}}', "{}", {}, [("field_removed", "breaking", "d")]),
-    # --- AC-05：类型 ---
+    # --- 类型 ---
     ("number_to_string", '{"a": 1}', '{"a": "1"}', {}, [("type_changed", "breaking", "a")]),
     ("object_to_null_only_one", '{"data": {"x": 1, "y": [1]}}', '{"data": null}', {}, [("type_changed", "breaking", "data")]),
     ("array_to_null", '{"a": [1]}', '{"a": null}', {}, [("type_changed", "breaking", "a")]),
@@ -57,11 +57,11 @@ CASES = [
     ("object_to_array", '{"a": {}}', '{"a": []}', {}, [("type_changed", "breaking", "a")]),
     ("root_type", "[]", "{}", {}, [("type_changed", "breaking", "$")]),
     ("int_vs_decimal_same_type", '{"a": 1}', '{"a": 1.0}', {}, []),
-    # --- AC-06：可空性 ---
+    # --- 可空性 ---
     ("scalar_to_null", '{"a": "x"}', '{"a": null}', {}, [("nullability_changed", "suspicious", "a")]),
     ("null_to_scalar", '{"a": null}', '{"a": 3}', {}, [("nullability_changed", "info", "a")]),
     ("nullable_suppresses", '{"a": "x"}', '{"a": null}', {"rules": [{"path": "a", "nullable": True}]}, []),
-    # D12：nullable 也放过对象/数组与 null 之间的变化，但不放过两个非 null 类型之间的变化
+    # nullable 也放过对象/数组与 null 之间的变化，但不放过两个非 null 类型之间的变化
     ("nullable_allows_container_null", '{"a": {"x": 1}}', '{"a": null}', {"rules": [{"path": "a", "nullable": True}]}, []),
     ("nullable_allows_null_to_array", '{"a": null}', '{"a": [1]}', {"rules": [{"path": "a", "nullable": True}]}, []),
     (
@@ -71,7 +71,7 @@ CASES = [
         {"rules": [{"path": "a", "nullable": True}]},
         [("type_changed", "breaking", "a")],
     ),
-    # --- AC-07：decimal ---
+    # --- decimal ---
     ("no_decimal_rule", '{"amount": 12.50}', '{"amount": 12.5}', {}, []),
     (
         "decimal_scale",
@@ -119,7 +119,7 @@ CASES = [
         {"rules": [{"path": "p", "decimal": {}, "on_value_change": "breaking"}]},
         [("scale_changed", "breaking", "p")],
     ),
-    # --- AC-08：值 ---
+    # --- 值 ---
     ("structure_ignores_values", '{"a": 1, "s": "x"}', '{"a": 2, "s": "y"}', {}, []),
     (
         "on_value_change",
@@ -142,7 +142,7 @@ CASES = [
         {"compare": "values", "rules": [{"path": "a", "on_value_change": "info"}]},
         [("value_changed", "info", "a")],
     ),
-    # D10：标量变 null 且配了值比较时，另报 value_changed；nullable 只去掉 nullability_changed
+    # 标量变 null 且配了值比较时，另报 value_changed；nullable 只去掉 nullability_changed
     (
         "values_null_change",
         '{"a": 1}',
@@ -164,7 +164,7 @@ CASES = [
         {"rules": [{"path": "amount", "on_value_change": "breaking", "nullable": True}]},
         [("value_changed", "breaking", "amount")],
     ),
-    # --- AC-21：ignore ---
+    # --- ignore ---
     ("ignore_subtree", '{"m": {"x": 1}}', '{"m": {"x": "1", "y": 2}}', {"rules": [{"path": "m", "ignore": True}]}, []),
     ("ignore_removed_field", '{"a": 1, "t": 1}', '{"a": 1}', {"defaults_rules": [{"path": "**.t", "ignore": True}]}, []),
     (
@@ -216,7 +216,7 @@ def test_nan_values_compare_equal():
     assert brief(run('{"a": NaN}', '{"a": 1}', compare="values")) == [("value_changed", "suspicious", "a")]
 
 
-# ---------- 数组：positional（AC-16、AC-20） ----------
+# ---------- 数组：positional ----------
 
 POSITIONAL = [{"path": "items", "array": {"mode": "positional"}}]
 
@@ -259,7 +259,7 @@ def test_positional_root_array():
     assert brief(run('[{"p": 1.10}]', '[{"p": 1.1}]', rules=rules)) == [("scale_changed", "breaking", "[0].p")]
 
 
-# ---------- 数组：keyed（AC-16、AC-17） ----------
+# ---------- 数组：keyed ----------
 
 KEYED = [{"path": "items", "array": {"keys": ["sku_id"]}}]
 
@@ -366,7 +366,7 @@ def test_unordered_skips_ignored_fields():
     assert run('{"tags": [{"k": 1, "t": 1}]}', '{"tags": [{"k": 1, "t": 2}]}', rules=rules).findings == []
 
 
-# ---------- 数组：schema（AC-18、AC-19、3b、3d） ----------
+# ---------- 数组：schema ----------
 
 
 def test_schema_default_order_and_values_ignored():
@@ -398,7 +398,7 @@ def test_schema_candidate_empty():
 
 
 def test_schema_both_empty_no_warning():
-    """D15：两侧都为空时没有可比较的，也不提示。"""
+    """两侧都为空时没有可比较的，也不提示。"""
     result = run('{"list": []}', '{"list": []}')
     assert result.findings == [] and result.warnings == []
 
@@ -455,7 +455,7 @@ def test_schema_nullable_rule():
 
 
 def test_schema_decimal_scales():
-    """AC-19 / 3b：data.list[*].price 出现 1 位小数，附示例下标。"""
+    """data.list[*].price 出现 1 位小数，附示例下标。"""
     base = '{"data": {"list": [{"price": 12.50}, {"price": 3.00}]}}'
     cand = '{"data": {"list": [{"price": 12.50}, {"price": 12.5}, {"price": 1.0}]}}'
     result = run(base, cand, defaults_rules=[{"path": "**.price", "decimal": {}}])
@@ -515,7 +515,7 @@ def test_array_length_levels():
     assert brief(run('{"a": []}', '{"a": [1]}')) == [("array_length_changed", "suspicious", "a")]
 
 
-# ---------- 组合穷举时发现的问题（D10–D15 与 review） ----------
+# ---------- 组合穷举和 review 时发现的问题 ----------
 
 
 @pytest.mark.parametrize(
@@ -536,7 +536,7 @@ def test_schema_children_follow_parent(base, cand, rules, expected):
 
 @pytest.mark.parametrize(("base", "cand"), [('[{"sub": [{"a": 1}]}]', '[{"sub": []}]'), ('[{"sub": []}]', '[{"sub": [{"a": 1}]}]')])
 def test_schema_inner_array_empty_on_one_side(base, cand):
-    """D14：内层数组在一侧全部为空时只提示，不报字段增删。"""
+    """内层数组在一侧全部为空时只提示，不报字段增删。"""
     result = run(base, cand)
     assert result.findings == []
     assert [(w.code, w.path) for w in result.warnings] == [("array_empty", "[*].sub")]
@@ -561,7 +561,7 @@ def test_warnings_deduplicated_by_generalized_path():
     assert [(w.code, w.path) for w in result.warnings] == [("rule_ineffective_in_schema", "k[*].sub")]
 
 
-# ---------- unordered（D13） ----------
+# ---------- unordered：结构按 schema，值按多重集合 ----------
 
 
 def test_unordered_reports_structure():

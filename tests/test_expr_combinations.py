@@ -1,6 +1,6 @@
 """表达式行为的快照与不变量：doc/dev/expr-combinations.md 必须和引擎当前的实际结果一致。
 
-快照失败说明表达式行为变了。确认变化符合 spec §7.7 后运行
+快照失败说明表达式行为变了。确认变化符合预期后运行
     uv run python scripts/gen_expr_combinations.py
 并在 review 时逐格检查 git diff。
 不变量失败说明引入了 bug，不要靠重新生成来"修"。"""
@@ -36,7 +36,7 @@ def _ok(table: str, a: str, b: str):
 
 def test_combination_doc_is_up_to_date():
     actual = gen.OUTPUT.read_text(encoding="utf-8")
-    assert actual == gen.render(), "表达式行为变了：确认符合 spec 后运行 uv run python scripts/gen_expr_combinations.py"
+    assert actual == gen.render(), "表达式行为变了：确认符合预期后运行 uv run python scripts/gen_expr_combinations.py"
 
 
 def test_no_raw_python_exceptions():

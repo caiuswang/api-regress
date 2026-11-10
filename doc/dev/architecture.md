@@ -1,6 +1,6 @@
 # 架构与模块职责
 
-> 只写已经实现的部分。尚未实现的设计见 [spec-v1-design.md](../spec/spec-v1-design.md)。
+> 只写已经实现的部分。对外行为见 `doc/user/`。
 > 文档里只引用文件名和函数名，不写行号。
 
 ## 分层
@@ -26,7 +26,7 @@ flowchart LR
   JSONLOAD[core.jsonload] --> MODELS
 ```
 
-`core.diff` 和 `core.jsonload` 已实现，T4 起由 `core.service` 调用（目前只有测试在用）。
+`core.diff`、`core.jsonload` 和表达式求值已实现，等 `run` 命令实现后由 `core.service` 调用（目前只有测试在用）。
 
 - `core` 是纯库，不能 import `cli` 或 `report`。由 `pyproject.toml` 里的 import-linter 契约保证，CI 执行 `lint-imports`。
 - `cli` 只做参数解析、日志初始化、打印摘要，业务都通过 `core.service`。
@@ -49,7 +49,7 @@ flowchart LR
 | `core/diff/values.py` | JSON 类型、小数位、标量相等、标量的规范形式（keyed 的 key、unordered 的元素） | `json_type`、`scale`、`scale_of`、`decimal_text`、`scalar_equal`、`canon_scalar` |
 | `core/service.py` | 对外编排入口（目前只有 validate），提供 async 和同步两种调用 | `validate_suite`、`validate_suite_sync` |
 | `cli.py` | Click 命令行（`cli` 命令组 + 各子命令）、日志初始化 | `main`、`cli`、`validate`、`setup_logging` |
-| `report/` | 报告渲染（T6 实现，目前为空包） | |
+| `report/` | 报告渲染（尚未实现，目前为空包） | |
 
 ## validate 主流程
 
@@ -79,13 +79,13 @@ flowchart TD
 - **变量写法**：`Substitution` 的正则不允许默认值里出现 `$` 和 `}`。替换前先把所有合法变量删掉，剩下的文本里还有 `${` 就算无法识别（嵌套写法也因此被拒绝）。变量为空字符串时，有默认值就取默认值。
 - **环境变量按 target 区分**：`substitute_env` 返回的 `Substitution` 记录每个缺失变量的位置。`targets.baseline.*` 归 baseline，`targets.candidate.*` 归 candidate，其余（defaults、requests）归 shared。`load_suite_text` 的 `sides` 参数是本命令需要的 target：这些 target 和 shared 缺变量时报错；其余只记录在 `LoadedSuite.missing_vars`。
 - **缺失变量导致的类型错误**：`validate` 时缺失变量保留原文（如 `"${T}"`），非字符串字段会校验失败。pydantic 会一次报出所有字段的错误：只要有一条落在缺失变量以外的位置，就照常报错；全部落在缺失变量的位置时，抛 `UnverifiedSuite`，`service` 把它当作「通过但未完全校验」处理，并跳过规则检查。不再尝试删字段重试，因为那样会制造假报错（必填字段被删）或假通过。
-- **原始模板**：`LoadedSuite.raw` 保存替换前的数据，T5 计算请求指纹时用（spec §8.2 要求用 `${VAR}` 替换前的模板）。
+- **原始模板**：`LoadedSuite.raw` 保存替换前的数据，留给以后计算快照的请求指纹：指纹用 `${VAR}` 替换前的模板，换 token 或换环境不会让指纹变化。
 - **base_url 检查**放在 `_post_checks`：本命令需要的 target 一定检查；不需要的一侧只要值不依赖缺失变量也检查，所以 `validate` 能发现写死的错误地址。协议不区分大小写，并且要求有主机名。
-- **`success` 覆盖**：`Suite.success_of` 用 `model_fields_set` 区分「没写」和「写了 null」（spec D6）。
+- **`success` 覆盖**：`Suite.success_of` 用 `model_fields_set` 区分「没写」和「写了 null」（请求级 `success: null` 表示不判定，不再沿用 defaults）。
 
 ## 表达式引擎（`core/expr.py`、`core/expr_values.py`）
 
-两层防护：`compile_expr` 的静态检查是主防线，`_Evaluator` 在求值时再兜底一层。`expr.py` 管语法和求值流程，`expr_values.py` 管值的语义（spec §7.7、D16）；拆开是为了让两边都远离单文件 1000 行的上限，也让语义规则集中在一处。
+两层防护：`compile_expr` 的静态检查是主防线，`_Evaluator` 在求值时再兜底一层。`expr.py` 管语法和求值流程，`expr_values.py` 管值的语义（用户可见的规则见 [expressions.md](../user/expressions.md)）；拆开是为了让两边都远离单文件 1000 行的上限，也让语义规则集中在一处。
 
 各种组合（操作数类型 × 运算符 / 函数 / 访问方式 / 真值上下文，变量 × success/assert）下的实际结果见 [expr-combinations.md](expr-combinations.md)。那份文件由 `scripts/gen_expr_combinations.py` 生成，`tests/test_expr_combinations.py` 保证它和代码一致，并在同一份结果上检查不变量（`==` 对称、`==`/`!=` 与 `in`/`not in` 互补、大小比较反对称、字面量与同值字段一致、不漏出 Python 原生异常和类型名）。**加新的语法、函数或运算符时，先在脚本里加上对应的维度，再重新生成，逐格检查 diff。** 不变量失败说明是 bug，不要靠重新生成来消除。
 
@@ -112,7 +112,7 @@ flowchart TD
   - 内置函数都是包装过的版本（`_len`、`_set`、`_abs`、`_extreme` 等），参数类型不对时抛 `ExprEvalError`；`_set` 拒绝对象/数组元素和布尔值与数字混合（Python 的哈希会把 `1` 和 `True` 当成同一个元素）。`_step` 把列表字面量和元组也当数组，`get`/`exists` 对它们和对 body 里的数组行为一致。
   - `type_name` 把值映射成 JSON 类型名（数字、字符串、布尔值、null、对象、数组、集合、生成器、base/cand），所有错误信息都用它。
 - **`JsonView`**：`__slots__` 只有 `_data`、`_path`，类上除 dunder 外没有公开属性，所以 `getattr` 一定落到 `__getattr__`，只映射 JSON key（`body.x.items` 是字段而不是 `dict.items`）。不可写、不可 hash、不能比较大小；`==` 和 `in` 按 JSON 语义比较（见上）；迭代对象得到 key，迭代数组得到包装后的元素。错误信息带具体路径（`字段不存在：data.nope`）。`HeadersView` 继承它，key 统一转小写。`get`/`exists` 也能从 `SideView` 出发（`_step`）。
-- **求值结果**：`Outcome(passed, error)`。任何异常都被捕获，`passed=False`，`error` 是简短原因（截断到 300 字符）；结果不是 bool 也算出错。表达式只能看到响应，看不到请求头，所以错误信息里不会出现请求头的值。T4 据此产生 `assert_failed`（`error is None and not passed`）、`assert_error`（`error` 非空）和 `success_eval_error` warning。
+- **求值结果**：`Outcome(passed, error)`。任何异常都被捕获，`passed=False`，`error` 是简短原因（截断到 300 字符）；结果不是 bool 也算出错。表达式只能看到响应，看不到请求头，所以错误信息里不会出现请求头的值。`run` 实现后据此产生 `assert_failed`（`error is None and not passed`）、`assert_error`（`error` 非空）和 `success_eval_error` warning。
 - **接入配置**：`config._expr_fields` 从替换变量后的原始数据（而不是 `Suite` 模型）里列出所有表达式字段，`_expr_issues` 逐个编译，错误带行号；原文含缺失变量的跳过，不是字符串的交给 pydantic 报。它在 pydantic 校验通过后和 `_post_checks` 一起执行；校验未通过但错误都落在缺失变量上（`UnverifiedSuite`）时也会先执行，所以 `validate` 不会因为别的字段缺变量就放过非法表达式。
 
 ## 路径与匹配
@@ -124,19 +124,19 @@ flowchart TD
 
 ## 规则合并
 
-- `CompiledRule.rank` = `(通配等级, 层级, 作用域, 书写顺序)`，对应 spec §6.3 的三级比较。通配等级来自 `paths.specificity`：无通配 2、含 `[*]` 1、含 `**` 0；层级是非 `**` token 的个数。
+- `CompiledRule.rank` = `(通配等级, 层级, 作用域, 书写顺序)`，对应 [suite.md](../user/suite.md)「规则怎么合并」的三级比较。通配等级来自 `paths.specificity`：无通配 2、含 `[*]` 1、含 `**` 0；层级是非 `**` token 的个数。
 - `RuleSet.resolve` 对每个属性分别在「匹配到且写了该属性」的规则里取 `max(rank)`；`Resolved.sources` 记录每个属性来自哪条规则（`RuleRef{scope, index}`）。结果按路径缓存在 `RuleSet` 实例里，`RuleSet` 按请求创建，规则不变。
 - ignore 剪枝：对比引擎自顶向下遍历，节点 `ignore` 为真就不再进入子树；`RuleSet.is_pruned` 供需要判断任意路径的场景使用（如不稳定字段建议），根节点 `$` 也算在内。
 - **缓存键**（`RuleSet._cache_key`）：keyed 元素只能被 `[*]` 和 `**` 匹配，和 `[*]` 等价；没有任何规则写到的下标同理。这两种 token 在缓存键里换成 `[*]`，大数组的每个元素共用一条缓存，不必把所有规则重新匹配一遍。
-- `CompiledRule` 按对象身份比较和 hash，可以放进 set（design §5 的未命中规则检测会用到）。
+- `CompiledRule` 按对象身份比较和 hash，可以放进 set（以后的「本次未命中的规则」检测会用到：遍历原始 body，命中一条就从待查集合移除）。
 
 ## 静态无效规则（`static_warnings`）
 
 | code | 判定 |
 |---|---|
-| `rule_under_ignored` | 规则路径的某个严格前缀（含根节点）被一条 `ignore: true` 规则 `covers`，并且没有更优先、可能 `overlaps` 该前缀的 `ignore: false` 规则。规则自己没写 `ignore` 时，所在节点本身也这样检查（spec D9）。见 `_ignored_by` |
+| `rule_under_ignored` | 规则路径的某个严格前缀（含根节点）被一条 `ignore: true` 规则 `covers`，并且没有更优先、可能 `overlaps` 该前缀的 `ignore: false` 规则。规则自己没写 `ignore` 时，所在节点本身也这样检查（这时规则同样不生效，例如全局忽略了 `**.updated_at`、请求级给 `data.updated_at` 配值比较却没写 `ignore: false`）。见 `_ignored_by` |
 | `index_rule_ineffective` | 规则里有字面下标，但没有任何 `mode: positional` 的 array 规则可能作用到那个数组 |
-| `rule_ineffective_in_schema` | `_check_value_in_schema`：规则配了 `on_value_change`，路径里有 `[*]`，但没有 keyed / positional 的 array 规则可能作用到那个数组（schema 和 unordered 都不逐个配对）。`_check_nested_array`：规则配了非 schema 的 `array`，路径里有 `[*]`，但外层数组只可能是 schema（D14）。两者共用 `_unpaired_array` |
+| `rule_ineffective_in_schema` | `_check_value_in_schema`：规则配了 `on_value_change`，路径里有 `[*]`，但没有 keyed / positional 的 array 规则可能作用到那个数组（schema 和 unordered 都不逐个配对）。`_check_nested_array`：规则配了非 schema 的 `array`，路径里有 `[*]`，但外层数组只可能是 schema（外层元素不配对，内层也无法配对）。两者共用 `_unpaired_array` |
 
 全局规则在「全局 + 所有请求的规则」中检查，只报一次：只要某个请求里的 `ignore: false` 或 `array` 规则可能让它生效就不报；但请求级的 `ignore: true` 不算数（`_ignorers`），因为它只影响个别请求。请求级规则在「全局 + 本请求」中检查。判定都偏保守：宁可漏报，不误报。运行时才能确定的情况（例如 `compare: values` 落在 schema 数组里）由对比引擎报。
 
@@ -175,19 +175,19 @@ flowchart TD
 ```
 
 - **只报最高层节点**：`visit` 遇到缺失或类型不同就返回，不再进入子树。schema 表按「先父后子」的顺序比较，已经报了缺失、新增或 `type_changed` 的路径，其子路径跳过（`_under`）。
-- **schema 列只在一侧出现**（`schema._presence`）：先看父节点在另一侧是否还出现过对象（子字段）或数组（`[*]` 元素）。没有出现过，说明变化在父节点上（已经报了，或者被 `nullable` 放过），这里不报；父节点仍是数组、只是元素全空时，给 `array_empty`，不报字段增删（D14）。
-- **schema 列的 null**（`_null_change`）：null 新出现、或基线只有 null 而候选出现了值时，涉及对象或数组的记 `type_changed`，标量记 `nullability_changed`（D11）。报了 `type_changed` 的列不再比较小数位。
+- **schema 列只在一侧出现**（`schema._presence`）：先看父节点在另一侧是否还出现过对象（子字段）或数组（`[*]` 元素）。没有出现过，说明变化在父节点上（已经报了，或者被 `nullable` 放过），这里不报；父节点仍是数组、只是元素全空时，给 `array_empty`，不报字段增删。
+- **schema 列的 null**（`_null_change`）：null 新出现、或基线只有 null 而候选出现了值时，涉及对象或数组的记 `type_changed`，标量记 `nullability_changed`（和普通字段一致：对象/数组变 null 是 breaking）。报了 `type_changed` 的列不再比较小数位。
 - **ignore**：每个节点先 `RuleSet.resolve`，`ignore` 为真直接返回，所以被 ignore 的字段被删除也不报。schema 建表（`_collect`）和 unordered 的规范形式（`_canon_at`）同样跳过被 ignore 的子树。
 - **缺失**：用 `models.ABSENT` 作哨兵，和 JSON 的 null 区分；它也直接作为 finding 的 `base_value` / `cand_value`，序列化为 `{"absent": true}`。
-- **值比较**：`DiffContext.value_level` —— `on_value_change` 优先，`compare: values` 时默认 suspicious，否则不比较。数字按数值相等；`decimal.allow_string` 时数字字符串也按数值比较（`values.decimal_text` 只认 ASCII 的 JSON 数字语法）。标量和 null 之间的变化在 `nullability_changed` 之外另报 `value_changed`（D10）。
-- **unordered**（D13）：先用 `schema.compare_elements(schema_mode=False)` 比较元素结构，再用 `arrays._canon_at` 把元素变成可 hash 的形式按多重集合比较。`_canon_at` 跳过被 ignore 的字段，内层数组除了 positional 之外都按多重集合，配了 `allow_string` 的数字字符串按数值（`values.canon_scalar`）。
+- **值比较**：`DiffContext.value_level` —— `on_value_change` 优先，`compare: values` 时默认 suspicious，否则不比较。数字按数值相等；`decimal.allow_string` 时数字字符串也按数值比较（`values.decimal_text` 只认 ASCII 的 JSON 数字语法）。标量和 null 之间的变化在 `nullability_changed` 之外另报 `value_changed`：结构类 finding 一个节点只报一条，值类可以叠加在上面，`nullable` 只去掉 `nullability_changed`。
+- **unordered**：先用 `schema.compare_elements(schema_mode=False)` 比较元素结构，再用 `arrays._canon_at` 把元素变成可 hash 的形式按多重集合比较。`_canon_at` 跳过被 ignore 的字段，内层数组除了 positional 之外都按多重集合，配了 `allow_string` 的数字字符串按数值（`values.canon_scalar`）。
 - **具体路径的元素 token**：positional 用 `Index`，keyed 用 `KeyedElem`（标签见 `arrays._label`），schema 和 unordered 用 `AnyIndex`。`[n]` 形式的规则只匹配 `Index`，所以对 schema / keyed 数组写字面下标不会生效。
 - **schema 表**（`schema.Column`）：`types` 和 `scales` 都是「值 → 第一次出现的元素下标」，用来给出 `example_index`。元素里的嵌套数组也并入同一张表，下标始终是外层数组的。只有配了 `decimal` 的路径才记小数位。
-- **元素内部不生效的规则**：`schema._warn_rules` 对表里命中 `on_value_change` 的规则提示；schema 模式下（`schema_mode=True`）还对 `compare: values` 每个数组提示一次，对内层数组上的非 schema `array` 规则提示（D14）。都是 `rule_ineffective_in_schema`。
+- **元素内部不生效的规则**：`schema._warn_rules` 对表里命中 `on_value_change` 的规则提示；schema 模式下（`schema_mode=True`）还对 `compare: values` 每个数组提示一次，对内层数组上的非 schema `array` 规则提示。都是 `rule_ineffective_in_schema`。
 - **warning 去重**：`DiffContext.warn` 用泛化路径（`DiffContext.where`）作为 `path`，按 (code, 泛化路径, 消息) 去重，所以 keyed / positional 数组里每个元素的同一个问题只提示一次。消息里的路径也用 `where`。
 - **keyed 降级**：`_index_by_key` 发现元素不是对象、key 缺失或不是标量、key 重复时返回 None，整个数组改走 `compare_schema`。key 用 `values.canon_scalar` 规范化，数字按数值相等，类型不同则不等。
 - **keyed 标签**（`arrays._label`）：数字按数值展示（`_number_label`，`1`、`1.0`、`1E0` 都是 `1`，所以 `finding_id` 跨运行稳定；这里只是展示，可以用 `normalize`），字符串会和数字、`true`/`false`/`null` 混淆或含特殊字符时加引号，因此 `1.5` 和 `"1.5"` 的路径不同。
-- **finding 字段**：`path` 是具体路径，`generalized_path` 是 `paths.generalize` 后的结果，`path_tokens` 是 `PathToken` 列表，`rule_refs` 是该节点生效的所有规则属性来源（`Resolved.refs`）。`base_type` / `cand_type` 是两侧值的 JSON 类型（缺失为 `absent`），因为 Decimal 序列化成字符串后，`12.50` 和 `"12.50"` 看不出区别，真实的 `{"absent": true}` 和缺失也分不开。schema 数组里的 finding（`report(summary=True)`），两侧的值是排好序的类型列表或小数位列表，`base_type` / `cand_type` 为 None；数组长度 finding 同理。`finding_id` 在 T4 生成。
+- **finding 字段**：`path` 是具体路径，`generalized_path` 是 `paths.generalize` 后的结果，`path_tokens` 是 `PathToken` 列表，`rule_refs` 是该节点生效的所有规则属性来源（`Resolved.refs`）。`base_type` / `cand_type` 是两侧值的 JSON 类型（缺失为 `absent`），因为 Decimal 序列化成字符串后，`12.50` 和 `"12.50"` 看不出区别，真实的 `{"absent": true}` 和缺失也分不开。schema 数组里的 finding（`report(summary=True)`），两侧的值是排好序的类型列表或小数位列表，`base_type` / `cand_type` 为 None；数组长度 finding 同理。`finding_id` 还没有生成，留给 `result.json` 输出时实现。
 - **交叉校验**：`tests/test_diff_crosscheck.py` 用随机 JSON 和 deepdiff（`zip_ordered_iterables=True`、`threshold_to_diff_deeper=0`）比较 positional + `compare: values` 下的路径集合。
 
 ## CLI 约定
