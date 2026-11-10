@@ -65,14 +65,7 @@ flowchart LR
 
 ## 3. 表达式引擎（simpleeval，已实测）
 
-- **body 和 headers 必须包一层只读的 `JsonView`**：
-  - `__getattr__` 只映射到 JSON 的 key，不暴露 dict 的方法。
-  - 原因：如果直接传 dict，`body.x.items` 拿到的是 `dict.items`，`body.x.get(...)` 也能被调用。
-- **字面量**：只把**浮点**字面量转成 Decimal，整数保留为 int。如果整数也转成 Decimal，`items[0]` 会抛 TypeError。int 和 Decimal 混合运算本来就是精确的。
-- **AST 白名单预检**：在 `validate` 和每次运行开始前执行。
-  - 只允许白名单内的节点类型和变量名。
-  - 禁止访问以 `_` 开头的属性。
-  - **函数调用的目标只能是白名单里的函数名**，否则可以通过 `obj.method()` 绕过限制。
+已在 T3 落地，实现约束迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「表达式引擎」一节。
 
 ## 4. result.json 契约
 

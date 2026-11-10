@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
-from api_regress.core import paths
+from api_regress.core import expr, paths
 from api_regress.core.models import SIDES, Level, Loc, Side, format_loc
 
 log = logging.getLogger(__name__)
@@ -456,6 +456,43 @@ def _bad_base_url(url: str) -> bool:
     return parts.scheme.lower() not in ("http", "https") or not parts.netloc
 
 
+def _mapping(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _sequence(value: Any) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _expr_fields(data: Any) -> list[tuple[Loc, Any, expr.ExprKind]]:
+    """替换变量后的原始数据里所有表达式字段：(位置, 值, 种类)。
+
+    直接读原始数据而不是 Suite 模型，这样 pydantic 校验没通过（UnverifiedSuite）时也能检查。"""
+    root = _mapping(data)
+    out: list[tuple[Loc, Any, expr.ExprKind]] = [(("defaults", "success"), _mapping(root.get("defaults")).get("success"), "success")]
+    for i, req in enumerate(_sequence(root.get("requests"))):
+        req = _mapping(req)
+        out.append((("requests", i, "success"), req.get("success"), "success"))
+        out += [
+            (("requests", i, "asserts", j, "expr"), _mapping(a).get("expr"), "assert")
+            for j, a in enumerate(_sequence(req.get("asserts")))
+        ]
+    return out
+
+
+def _expr_issues(data: Any, ctx: _Ctx, unresolved: set[Loc]) -> list[ConfigIssue]:
+    """表达式白名单检查（spec §7.7）。原文含缺失变量的跳过，设置变量后再查；类型不对的交给 pydantic 报。"""
+    issues = []
+    for loc, source, kind in _expr_fields(data):
+        if not isinstance(source, str) or loc in unresolved:
+            continue
+        try:
+            expr.compile_expr(source, kind)
+        except expr.ExprError as exc:
+            issues.append(ctx.issue(loc, f"表达式不合法：{exc}"))
+    return issues
+
+
 def _post_checks(suite: Suite, ctx: _Ctx, sides: Collection[Side], unresolved: set[Loc]) -> list[ConfigIssue]:
     issues = []
     seen: set[str] = set()
@@ -505,8 +542,11 @@ def load_suite_text(
     try:
         suite = _validate(data, ctx, unresolved)
     except _Unverified as exc:
+        bad = _expr_issues(data, ctx, unresolved)
+        if bad:
+            raise ConfigError(bad) from None
         raise UnverifiedSuite(missing, exc.fields, _request_count(raw)) from None
-    issues = _post_checks(suite, ctx, sides, unresolved)
+    issues = _post_checks(suite, ctx, sides, unresolved) + _expr_issues(data, ctx, unresolved)
     if issues:
         raise ConfigError(issues)
     loaded = LoadedSuite(source=source, suite=suite, raw=raw, missing_vars=missing)

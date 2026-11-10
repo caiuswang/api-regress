@@ -13,6 +13,10 @@ flowchart LR
   RULES --> CFG
   RULES --> PATHS[core.paths]
   CFG --> PATHS
+  CFG --> EXPR[core.expr]
+  EXPR --> EXPRV[core.expr_values]
+  EXPRV --> PATHS
+  EXPR --> PATHS
   CFG --> MODELS[core.models]
   RULES --> MODELS
   MODELS --> PATHS
@@ -34,6 +38,8 @@ flowchart LR
 | `core/models.py` | 跨模块共用的枚举和模型：`Level`、`Side`、`WarningCode`、`WarningItem`；finding 相关：`FindingType`、`Finding`、`ValueType`、`RuleRef`、`PathToken`、`Absent`（单例 `ABSENT`） | `format_loc`、`to_path_tokens` |
 | `core/paths.py` | 路径语法：解析、格式化、匹配、泛化、具体程度 | `parse`、`format_path`、`match`、`covers`、`overlaps`、`generalize`、`specificity` |
 | `core/config.py` | suite 的 pydantic 模型；YAML 加载与规模限制；`${VAR}` 替换；报错行号 | `load_suite`、`load_suite_text`、`substitute_env`、`Suite.success_of`、`format_where` |
+| `core/expr.py` | success / asserts 表达式：AST 白名单编译、simpleeval 求值、计算量预算；重新导出 `expr_values` 的视图类 | `compile_expr`、`eval_success`、`eval_assert`、`Outcome` |
+| `core/expr_values.py` | 表达式里的值怎么运算：只读视图、JSON 语义的相等与包含、内置函数、运算符；类型不匹配一律抛 `ExprEvalError` | `JsonView`、`HeadersView`、`SideView`、`json_equal`、`contains`、`FUNCTIONS`、`OPERATORS`、`type_name` |
 | `core/rules.py` | 规则按属性合并、ignore 剪枝、静态无效规则检测 | `RuleSet.resolve`、`RuleSet.is_pruned`、`static_warnings` |
 | `core/jsonload.py` | 判断 body 是否为 JSON、按 charset 解码、去 BOM、Decimal 解析、重复 key / NaN / 嵌套过深 | `load_body`、`parse_json`、`is_json_media`、`media_type`、`charset_of` |
 | `core/diff/walker.py` | 对比入口；按 JSON 类型分发；字段缺失、类型、可空性、decimal、值比较 | `diff_json`、`visit`、`DiffResult` |
@@ -55,8 +61,10 @@ flowchart TD
   C0 --> C1["_parse_yaml：_LineMap 建行号表、查重复 key"]
   C1 --> C2["_substitute：替换变量，无法识别的写法报错，记录缺失变量"]
   C2 --> C3["_validate：pydantic 校验（extra=forbid）"]
-  C3 -->|错误都落在缺失变量的字段上| U["UnverifiedSuite → 通过，列出字段，跳过规则检查"]
-  C3 --> C4["_post_checks：重复 name、base_url"]
+  C3 -->|错误都落在缺失变量的字段上| X["_expr_issues：表达式白名单"]
+  X -->|无错| U["UnverifiedSuite → 通过，列出字段，跳过规则检查"]
+  X -->|有错| ERR["ConfigError → 退出码 2"]
+  C3 --> C4["_post_checks：重复 name、base_url；_expr_issues：表达式白名单"]
   C4 --> D["缺失变量 → env_var_missing"]
   D --> E["rules.static_warnings"]
   E --> F["ValidationReport → stdout 摘要，退出码 0 / 2"]
@@ -74,6 +82,36 @@ flowchart TD
 - **原始模板**：`LoadedSuite.raw` 保存替换前的数据，T5 计算请求指纹时用（spec §8.2 要求用 `${VAR}` 替换前的模板）。
 - **base_url 检查**放在 `_post_checks`：本命令需要的 target 一定检查；不需要的一侧只要值不依赖缺失变量也检查，所以 `validate` 能发现写死的错误地址。协议不区分大小写，并且要求有主机名。
 - **`success` 覆盖**：`Suite.success_of` 用 `model_fields_set` 区分「没写」和「写了 null」（spec D6）。
+
+## 表达式引擎（`core/expr.py`、`core/expr_values.py`）
+
+两层防护：`compile_expr` 的静态检查是主防线，`_Evaluator` 在求值时再兜底一层。`expr.py` 管语法和求值流程，`expr_values.py` 管值的语义（spec §7.7、D16）；拆开是为了让两边都远离单文件 1000 行的上限，也让语义规则集中在一处。
+
+- **编译**：`_parse`（`ast.parse(mode="eval")`；SyntaxWarning 如无效转义一律当错误，结果不受 `PYTHONWARNINGS` 影响）→ `_Checker.run` → `_DecimalLiterals` 把浮点字面量按源码原文（`ast.get_source_segment`）转成 Decimal，保留小数位；整数保持 int，否则 `items[0]` 会抛 TypeError。超出 Decimal 范围的字面量、嵌套过深都转成 `ExprError`。结果是 `CompiledExpr`。
+- **`_Checker`**：
+  - `_result`：顶层是元组、列表、推导式或非布尔常量时直接拒绝（防止 `"a == 1, 'msg'"` 恒为真）。
+  - 逐节点（分发表 `checks`）：节点类型在 `_STRUCTURE_NODES` 里；运算符没有位置信息，由所在的 BinOp/UnaryOp/Compare 检查是否在 `OPERATORS` 里；`is` / `is not` 至少一边是 None/True/False 常量；调用目标只能是 `FUNCTIONS` 里的名字，不能是方法，不支持关键字参数，参数个数按 `ARITY` 检查，`get`/`exists` 的常量路径用 `literal_path` 检查；属性不能以 `_` 开头，源码里的属性名必须和 AST 里的一致（Python 会对标识符做 NFKC 规范化，`.字段１` 会被读成 `.字段1`），`base`/`cand` 只允许 `SIDE_ATTRS`，`status` 不能再用 `.`；推导式循环变量只能是单个名字，不能是 `_RESERVED` 或 `_` 开头（这一项在逐节点检查之前单独跑一遍，提示更准确）。
+  - 位置约束（`_allowed_positions` 先收集允许的位置）：生成器只能作为 `_GENERATOR_FUNCTIONS`（all/any/set/min/max）的唯一参数，否则当成值使用时真值恒为真、和列表比较恒不等；`base`/`cand` 只能作为属性访问的对象或 `get`/`exists` 的第一个参数，否则 `cand == base` 比较的是对象身份，两侧不同对象时恒为假。
+  - 变量名按作用域单独检查（`_names`）：和 Python 一致，第一个 `for` 的可迭代对象在外层作用域，循环变量只在推导式内部可见。
+  - 报错位置由 `_where` 生成：`col_offset` 是 UTF-8 字节数，转成字符数；多行表达式同时给出行号。
+- **`_Evaluator`**：继承 simpleeval 的 `SimpleEval`，复用它的下标、比较、布尔运算、一元/二元运算、条件表达式和函数调用的处理，自己负责：
+  - 分发：类级的 `_HANDLERS` 表，不在白名单里的节点直接报错。**不调用父类 `__init__`**：它每次都用 `warnings.catch_warnings()` 修改进程级的 warnings 过滤器，多线程并发求值时会把 `ignore` 过滤器永久留下；类级分发表也避免了绑定方法造成的引用环。
+  - 作用域：`scope` 字典按词法作用域保存循环变量，`_eval_in` 切换。
+  - 推导式：`_generate` 是惰性生成器，`any`/`all` 得到结果就停止；列表推导式在外面套 `list(...)`。
+  - 属性访问：只允许在 `JsonView` 和 `SideView`（限 `SIDE_ATTRS`）上用 `.`；对 null 和其他值给出明确的错误。
+  - 下标：`_eval_subscript` 对 `JsonView` 交给视图；字符串、列表字面量、元组走 `_index_sequence`，和 JSON 数组一样只接受整数（不接受布尔值）；其他值报错。
+  - 遍历：`for` 的对象必须是 `ITERABLE`（视图、字符串、列表、元组、集合、生成器）。
+  - 错误兜底：`_metered` 包装每个函数和运算符，捕获漏网的 `TypeError` / `ValueError` / `IndexError` / `KeyError` 和 Decimal 异常，转成用 `type_name` 描述的提示，保证错误信息里不出现 Python 内部类型名。
+  - 计算量：`_Budget` 每个节点记 1；函数调用和运算符经 `_metered` 包装，按参数规模记账（JSON 节点数按 id 缓存）；推导式迭代另有 `MAX_ITERATIONS` 上限。总量超过 `WORK_BUDGET` 时报错。
+  - 求值在 `decimal.localcontext(prec=DECIMAL_PRECISION)` 里进行，不受全局 Decimal 上下文影响。
+- **值的语义（`expr_values.py`）**：
+  - 布尔值不是数字：`json_equal` 在任一边是 bool 时要求两边类型相同（`false != 0`）；数组（含元组）逐个元素比较，对象按 key 比较。`contains` 用同样的相等判断数组和集合的元素，对象判断 key，字符串判断子串。`JsonView.__eq__` / `__contains__` 也走这两个函数，所以 Python 内部的比较（如列表里的 `in`）语义一致。
+  - 运算符：`+` 只接受两个数字、两个字符串或两个数组（`_is_array`），拼接结果不超过 `MAX_SEQUENCE_LENGTH` 并重新包装成 `JsonView`；`-` 是数字或集合；`/` 一律转 Decimal 精确除；`//`、`%` 按 Decimal 语义（向零取整），两边都是整数时结果转回 int；`*`、`%` 只接受数字，整数乘积受 `MAX_INT_BITS` 限制；大小比较（`_ordering`）只在两个数字或两个字符串之间，NaN 报错；一元 `-`/`+` 只接受数字；不提供 `**` 和位运算。
+  - 内置函数都是包装过的版本（`_len`、`_set`、`_abs`、`_extreme` 等），参数类型不对时抛 `ExprEvalError`；`_set` 拒绝对象/数组元素和布尔值与数字混合（Python 的哈希会把 `1` 和 `True` 当成同一个元素）。`_step` 把列表字面量和元组也当数组，`get`/`exists` 对它们和对 body 里的数组行为一致。
+  - `type_name` 把值映射成 JSON 类型名（数字、字符串、布尔值、null、对象、数组、集合、生成器、base/cand），所有错误信息都用它。
+- **`JsonView`**：`__slots__` 只有 `_data`、`_path`，类上除 dunder 外没有公开属性，所以 `getattr` 一定落到 `__getattr__`，只映射 JSON key（`body.x.items` 是字段而不是 `dict.items`）。不可写、不可 hash、不能比较大小；`==` 和 `in` 按 JSON 语义比较（见上）；迭代对象得到 key，迭代数组得到包装后的元素。错误信息带具体路径（`字段不存在：data.nope`）。`HeadersView` 继承它，key 统一转小写。`get`/`exists` 也能从 `SideView` 出发（`_step`）。
+- **求值结果**：`Outcome(passed, error)`。任何异常都被捕获，`passed=False`，`error` 是简短原因（截断到 300 字符）；结果不是 bool 也算出错。表达式只能看到响应，看不到请求头，所以错误信息里不会出现请求头的值。T4 据此产生 `assert_failed`（`error is None and not passed`）、`assert_error`（`error` 非空）和 `success_eval_error` warning。
+- **接入配置**：`config._expr_fields` 从替换变量后的原始数据（而不是 `Suite` 模型）里列出所有表达式字段，`_expr_issues` 逐个编译，错误带行号；原文含缺失变量的跳过，不是字符串的交给 pydantic 报。它在 pydantic 校验通过后和 `_post_checks` 一起执行；校验未通过但错误都落在缺失变量上（`UnverifiedSuite`）时也会先执行，所以 `validate` 不会因为别的字段缺变量就放过非法表达式。
 
 ## 路径与匹配
 

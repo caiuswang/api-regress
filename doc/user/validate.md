@@ -13,6 +13,7 @@ api-regress validate <suite.yaml> [--log-level LEVEL] [--log-file FILE]
 - `method`：只能是 `GET` 或 `HEAD`，写方法（POST/PUT/PATCH/DELETE）一律报错
 - `base_url`：必须是 `http://` 或 `https://` 开头的完整地址（值来自缺失变量的那一侧除外）
 - 规则：路径语法；至少写一个属性；`array` 的 `mode` 与 `keys` 是否一致
+- `success` 和 `asserts` 表达式：语法、变量名、函数名、参数个数是否在白名单里，见 [expressions.md](expressions.md)。表达式原文引用了没有设置的环境变量时，跳过这条表达式，设置后再检查
 - 环境变量：写法无法识别时报错；缺少的变量**不报错**，按 target 列成 warning
 
 ## 输出与退出码

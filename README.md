@@ -106,6 +106,7 @@ api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-de
 | [doc/spec/spec-v1-tasks.md](doc/spec/spec-v1-tasks.md) | 任务拆分与进度 |
 | [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、环境变量、YAML 常见坑、路径写法 |
 | [doc/user/compare.md](doc/user/compare.md) | 对比规则：差异类型与级别、规则属性、数组模式怎么选 |
+| [doc/user/expressions.md](doc/user/expressions.md) | `success` 与 `asserts` 表达式的写法、内置函数、不支持的语法 |
 | [doc/dev/architecture.md](doc/dev/architecture.md) | 模块职责、关键路径、主流程（随实现补充） |
 | [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md) | 对比引擎在各种组合下的实际输出（自动生成） |
 
