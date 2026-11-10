@@ -284,22 +284,33 @@ def _children(node: yaml.Node) -> list[yaml.Node]:
     return []
 
 
-def _measure(node: yaml.Node, depth: int, memo: dict[int, int], active: set[int]) -> int:
-    """展开锚点后的节点数。防止锚点指数展开、自引用和过深的嵌套。"""
-    key = id(node)
-    if key in memo:
-        return memo[key]
-    if key in active:
-        raise ValueError("锚点引用了自身")
-    if depth > MAX_DEPTH:
+def _measure_new(node: yaml.Node, depth: int, memo: dict[int, tuple[int, int]], active: set[int]) -> tuple[int, int]:
+    collection = isinstance(node, (yaml.MappingNode, yaml.SequenceNode))
+    if collection and depth > MAX_DEPTH:
         raise ValueError(f"嵌套超过 {MAX_DEPTH} 层")
-    active.add(key)
-    size = 1 + sum(_measure(child, depth + 1, memo, active) for child in _children(node))
-    active.discard(key)
+    active.add(id(node))
+    measured = [_measure(child, depth + 1, memo, active) for child in _children(node)]
+    active.discard(id(node))
+    size = 1 + sum(m[0] for m in measured)
     if size > MAX_NODES:
         raise ValueError(f"展开锚点后超过 {MAX_NODES} 个节点")
-    memo[key] = size
-    return size
+    return size, int(collection) + max((m[1] for m in measured), default=0)
+
+
+def _measure(node: yaml.Node, depth: int, memo: dict[int, tuple[int, int]], active: set[int]) -> tuple[int, int]:
+    """返回 (展开锚点后的节点数, 子树里映射和序列的层数)。防止锚点指数展开、自引用和过深的嵌套。
+
+    depth 是 node 所在的层（根为 1），只数映射和序列，标量不算一层。
+    同一个锚点可能在不同深度被引用，所以记忆的是子树高度，每次命中都按当前深度重新判断。"""
+    key = id(node)
+    if key in active:
+        raise ValueError("锚点引用了自身")
+    if key not in memo:
+        memo[key] = _measure_new(node, depth, memo, active)
+    size, height = memo[key]
+    if depth - 1 + height > MAX_DEPTH:
+        raise ValueError(f"嵌套超过 {MAX_DEPTH} 层")
+    return size, height
 
 
 def _key(part: str | int) -> str:
@@ -396,7 +407,7 @@ def _compose(text: str, ctx: _Ctx) -> Any:
     try:
         node = yaml.compose(text, Loader=yaml.SafeLoader)
         if node is not None:
-            _measure(node, 0, {}, set())
+            _measure(node, 1, {}, set())
         return node, yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise _yaml_error(exc, ctx, text) from None

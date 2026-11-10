@@ -313,6 +313,26 @@ def test_hostile_yaml_is_config_error(text, message):
     assert message in issue.message
 
 
+@pytest.mark.parametrize(
+    ("text", "too_deep"),
+    [
+        # 根映射算第 1 层，x 下面再 63 层 = 64 层：允许
+        ("x: " + "[" * 63 + "]" * 63 + "\n", False),
+        ("x: " + "[" * 63 + "1" + "]" * 63 + "\n", False),
+        # 65 层：不管最里面是不是标量都拒绝
+        ("x: " + "[" * 64 + "]" * 64 + "\n", True),
+        ("x: " + "[" * 64 + "1" + "]" * 64 + "\n", True),
+        # 锚点定义得浅、引用得深：按引用处的深度算
+        ("a: &A " + "[" * 40 + "]" * 40 + "\nb: " + "[" * 30 + "*A" + "]" * 30 + "\n", True),
+        ("a: &A " + "[" * 30 + "]" * 30 + "\nb: " + "[" * 30 + "*A" + "]" * 30 + "\n", False),
+    ],
+    ids=["64_empty", "64_scalar", "65_empty", "65_scalar", "deep_alias", "alias_within_limit"],
+)
+def test_nesting_limit_counts_collections(text, too_deep):
+    messages = [issue.message for issue in errors(text)]
+    assert any("嵌套" in m for m in messages) is too_deep
+
+
 def test_alias_bomb_is_rejected_quickly():
     lines = ["a0: &a0 [x, x, x, x, x, x, x, x, x, x]"]
     for i in range(1, 7):

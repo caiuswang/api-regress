@@ -6,7 +6,7 @@ api-regress validate <suite.yaml> [--log-level LEVEL] [--log-file FILE]
 
 只做静态检查，**不发任何请求**。检查内容：
 
-- YAML 语法、重复的 key、文件规模（嵌套超过 64 层、锚点展开后过大、锚点引用自身都会报错）
+- YAML 语法、重复的 key、文件规模（映射和列表嵌套超过 64 层、锚点展开后过大、锚点引用自身都会报错；锚点按引用处的深度算）
 - 字段拼写（未知字段直接报错）、字段类型
 - `version` 只能是 `1`
 - 请求 `name`：只能包含 `A-Z a-z 0-9 _ . -`，并且不能重复。**区分大小写**：`order-list` 和 `Order-List` 是两条请求，但在 macOS、Windows 上它们的快照文件会互相覆盖，不要这样起名
