@@ -109,6 +109,7 @@ api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-de
 | [doc/user/expressions.md](doc/user/expressions.md) | `success` 与 `asserts` 表达式的写法、内置函数、不支持的语法 |
 | [doc/dev/architecture.md](doc/dev/architecture.md) | 模块职责、关键路径、主流程（随实现补充） |
 | [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md) | 对比引擎在各种组合下的实际输出（自动生成） |
+| [doc/dev/expr-combinations.md](doc/dev/expr-combinations.md) | 表达式引擎在各种组合下的实际结果（自动生成） |
 
 ## 开发
 
@@ -129,5 +130,6 @@ uv run pytest
 ```
 
 改了对比行为时，`tests/test_diff_combinations.py` 会失败：确认变化符合预期后运行 `uv run python scripts/gen_diff_combinations.py` 重新生成 [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md)。
+改了表达式行为时同理：`tests/test_expr_combinations.py` 的快照测试会失败，确认后运行 `uv run python scripts/gen_expr_combinations.py` 重新生成 [doc/dev/expr-combinations.md](doc/dev/expr-combinations.md)；同一文件里的不变量测试失败则说明是 bug。
 
 项目规则和提交约定见 [CLAUDE.md](CLAUDE.md)。

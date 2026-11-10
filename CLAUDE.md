@@ -48,6 +48,7 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
 ```
 
 对比行为变化后重新生成组合表：`uv run python scripts/gen_diff_combinations.py`（输出 `doc/dev/diff-combinations.md`）。
+表达式行为变化后同理：`uv run python scripts/gen_expr_combinations.py`（输出 `doc/dev/expr-combinations.md`）。
 
 ## 架构原则
 
@@ -81,6 +82,7 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
 | suite 配置字段、规则语义、路径语法 | **先改 spec**，再改 `doc/user/` 的格式和规则说明 |
 | finding 类型、级别、请求状态、warning code | spec 中的对比语义、`doc/user/` 中的报告解读、`result.json` 的 JSON Schema、`doc/dev/` |
 | 对比语义（`core/diff/`、`core/jsonload.py` 的行为） | 先改 spec；在 `scripts/gen_diff_combinations.py` 里补上新的维度或场景，重新生成 `doc/dev/diff-combinations.md`，逐格检查 diff（`tests/test_diff_combinations.py` 会拦住没更新的情况） |
+| 表达式语义（`core/expr.py`、`core/expr_values.py` 的行为） | 先改 spec §7.7；在 `scripts/gen_expr_combinations.py` 里补上新的维度，重新生成 `doc/dev/expr-combinations.md`，逐格检查 diff（`tests/test_expr_combinations.py` 拦住没更新的情况，并检查不变量） |
 | `result.json` 的数据模型 | 重新导出 JSON Schema，更新 `doc/dev/` 中的数据契约 |
 | 新增、删除、重命名模块，模块职责变化，主流程变化 | `doc/dev/` 中的模块职责、关键路径、主流程图 |
 | 依赖、检查命令、开发命令 | 本文件中的"检查命令"一节、`README.md` |

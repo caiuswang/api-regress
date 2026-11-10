@@ -87,6 +87,8 @@ flowchart TD
 
 两层防护：`compile_expr` 的静态检查是主防线，`_Evaluator` 在求值时再兜底一层。`expr.py` 管语法和求值流程，`expr_values.py` 管值的语义（spec §7.7、D16）；拆开是为了让两边都远离单文件 1000 行的上限，也让语义规则集中在一处。
 
+各种组合（操作数类型 × 运算符 / 函数 / 访问方式 / 真值上下文，变量 × success/assert）下的实际结果见 [expr-combinations.md](expr-combinations.md)。那份文件由 `scripts/gen_expr_combinations.py` 生成，`tests/test_expr_combinations.py` 保证它和代码一致，并在同一份结果上检查不变量（`==` 对称、`==`/`!=` 与 `in`/`not in` 互补、大小比较反对称、字面量与同值字段一致、不漏出 Python 原生异常和类型名）。**加新的语法、函数或运算符时，先在脚本里加上对应的维度，再重新生成，逐格检查 diff。** 不变量失败说明是 bug，不要靠重新生成来消除。
+
 - **编译**：`_parse`（`ast.parse(mode="eval")`；SyntaxWarning 如无效转义一律当错误，结果不受 `PYTHONWARNINGS` 影响）→ `_Checker.run` → `_DecimalLiterals` 把浮点字面量按源码原文（`ast.get_source_segment`）转成 Decimal，保留小数位；整数保持 int，否则 `items[0]` 会抛 TypeError。超出 Decimal 范围的字面量、嵌套过深都转成 `ExprError`。结果是 `CompiledExpr`。
 - **`_Checker`**：
   - `_result`：顶层是元组、列表、推导式或非布尔常量时直接拒绝（防止 `"a == 1, 'msg'"` 恒为真）。
