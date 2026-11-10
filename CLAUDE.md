@@ -98,7 +98,9 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
   - type：`feat`、`fix`、`refactor`、`test`、`docs`、`chore`。
   - scope：用模块名或任务号，例如 `feat(config): 支持 ${VAR:-default}`、`docs(spec): 调整数组长度变化的级别`。
   - 正文说明为什么改。涉及验收项时写上 AC 编号。
-- **一次提交只做一件事**：spec 或文档的修改，和代码修改分开提交。
+- **按功能提交，一次提交只做一件事**：一个功能（或一个修复）的 spec、代码、测试、文档放在同一个提交里，不要按"文档 / 代码 / 测试"拆开。
+  - 例如实现 T1 时，T1 涉及的 spec 补充、代码、测试、`doc/` 更新整体作为一个提交。
+  - 和这个功能无关的改动（例如顺手修正项目规则、无关的文档偏差）单独提交。
 - **提交前先跑检查**：radon、lint-imports、pytest 都要通过，不能提交跑不通的代码。
 - **不要提交**：运行输出（`api-regress-out/`）、快照数据、虚拟环境、含 token 的文件。
 - 提交信息末尾加上 harness 要求的 Co-Authored-By 行。
