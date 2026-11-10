@@ -21,13 +21,14 @@ api-regress 是一个给 QA 做 API 回归用的 Python CLI 工具，开发也�
 | `doc/spec/spec-vN.md` | 行为规格，**行为以它为准**；内含验收项（AC）和决策记录 |
 | `doc/spec/spec-vN-design.md` | 实现约束，以及实测过的技术结论；和 spec 冲突时以 spec 为准 |
 | `doc/spec/spec-vN-tasks.md` | 任务拆分、依赖关系、**当前进度** |
-| `doc/user/` | 面向使用者：命令、配置格式、报告怎么看 |
+| `doc/user/` | 面向使用者：命令、配置格式（`suite.md`）、对比规则、表达式、报告怎么看 |
 | `doc/dev/` | 面向维护者：模块职责、关键路径、主流程图、数据契约 |
 
 **规则**
 - 改行为之前，先改 spec。
 - spec 里已经确认的决策不要推翻；确实需要变更时，先和用户确认。
 - 文档里**不要引用代码行号**，因为行号容易和代码对不上。改为写文件名或函数名。
+- **spec 只用于项目管理，随时可能删除**。`doc/user/`、`doc/dev/`、`README.md`、代码、注释、测试、生成脚本都**不能引用 `doc/spec/`**：不链接 spec 文件，不写章节号（§）、验收项编号（AC-xx）、决策编号（Dxx）、任务号（Tx）、场景和限制编号（Sx、Lx）。需要的内容直接写进 `doc/user/` 或 `doc/dev/`，测试名和注释用描述性文字。spec 内部可以互相引用，也可以引用其他文档。
 
 ## 硬性约束
 
@@ -79,10 +80,10 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
 | 改了什么 | 需要同步的文档 |
 |---|---|
 | CLI 命令、参数、stdout 输出、退出码 | `doc/user/` 的命令说明、`README.md` |
-| suite 配置字段、规则语义、路径语法 | **先改 spec**，再改 `doc/user/` 的格式和规则说明 |
+| suite 配置字段、规则语义、路径语法 | **先改 spec**，再改 `doc/user/suite.md` 和相关的规则说明 |
 | finding 类型、级别、请求状态、warning code | spec 中的对比语义、`doc/user/` 中的报告解读、`result.json` 的 JSON Schema、`doc/dev/` |
 | 对比语义（`core/diff/`、`core/jsonload.py` 的行为） | 先改 spec；在 `scripts/gen_diff_combinations.py` 里补上新的维度或场景，重新生成 `doc/dev/diff-combinations.md`，逐格检查 diff（`tests/test_diff_combinations.py` 会拦住没更新的情况） |
-| 表达式语义（`core/expr.py`、`core/expr_values.py` 的行为） | 先改 spec §7.7；在 `scripts/gen_expr_combinations.py` 里补上新的维度，重新生成 `doc/dev/expr-combinations.md`，逐格检查 diff（`tests/test_expr_combinations.py` 拦住没更新的情况，并检查不变量） |
+| 表达式语义（`core/expr.py`、`core/expr_values.py` 的行为） | 先改 spec；同步 `doc/user/expressions.md`；在 `scripts/gen_expr_combinations.py` 里补上新的维度，重新生成 `doc/dev/expr-combinations.md`，逐格检查 diff（`tests/test_expr_combinations.py` 拦住没更新的情况，并检查不变量） |
 | `result.json` 的数据模型 | 重新导出 JSON Schema，更新 `doc/dev/` 中的数据契约 |
 | 新增、删除、重命名模块，模块职责变化，主流程变化 | `doc/dev/` 中的模块职责、关键路径、主流程图 |
 | 依赖、检查命令、开发命令 | 本文件中的"检查命令"一节、`README.md` |
@@ -93,6 +94,7 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
 **检测方法**（收尾前执行）
 1. 列出这次改动涉及的标识符，包括命令名、参数名、配置字段、finding 类型、文件名、函数名，然后在 `doc/`、`README.md`、`CLAUDE.md` 里逐个 grep，确认描述仍然正确。
 2. `doc/dev/` 里引用的文件路径和函数名，都要在代码里实际存在。改名或删除时，全局搜索一遍旧名字。
+   spec 以外不能出现对 spec 的引用：`grep -rnE 'doc/spec|spec-v|§|AC-[0-9]|\bD[0-9]+\b|\bT[0-9]\b' README.md doc/user doc/dev src scripts tests` 应当没有结果（`D107` 这类 lint 代码、mermaid 节点名除外）。
 3. 文档里的示例（suite YAML、命令、报告片段）要和当前实现一致；能直接执行的示例要实际跑一遍。
 4. 发现和本次改动无关的文档偏差时，在回复里告诉用户，不要悄悄忽略。
 
