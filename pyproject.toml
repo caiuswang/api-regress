@@ -1,0 +1,46 @@
+[project]
+name = "api-regress"
+version = "0.1.0"
+description = "对比基线与候选的 JSON API 响应结构，发现发版后接口被意外改坏"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx[brotli]>=0.27",
+    "pydantic>=2.7,<3",
+    "PyYAML>=6.0",
+    "Jinja2>=3.1",
+    "simpleeval>=1.0",
+    "click>=8.1",
+]
+
+[project.scripts]
+api-regress = "api_regress.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "radon>=6",
+    "import-linter>=2",
+    "deepdiff>=7",
+    "pytest-httpserver>=1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/api_regress"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.importlinter]
+root_package = "api_regress"
+
+[[tool.importlinter.contracts]]
+name = "core 不依赖 cli 和 report"
+type = "forbidden"
+source_modules = ["api_regress.core"]
+forbidden_modules = ["api_regress.cli", "api_regress.report"]

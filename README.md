@@ -104,19 +104,25 @@ api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-de
 | [doc/spec/spec-v1.md](doc/spec/spec-v1.md) | v1 需求（行为以它为准） |
 | [doc/spec/spec-v1-design.md](doc/spec/spec-v1-design.md) | 技术设计约束 |
 | [doc/spec/spec-v1-tasks.md](doc/spec/spec-v1-tasks.md) | 任务拆分与进度 |
-| `doc/user/` | 使用文档（随实现补充） |
-| `doc/dev/` | 维护文档（随实现补充） |
+| [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、环境变量、YAML 常见坑、路径写法 |
+| [doc/dev/architecture.md](doc/dev/architecture.md) | 模块职责、关键路径、主流程（随实现补充） |
 
 ## 开发
 
-- 环境：Python 3.12。
+- 环境：Python 3.12，用 [uv](https://docs.astral.sh/uv/) 管理依赖。
 - 代码约束：每个函数的 radon 复杂度不超过 B，单个文件不超过 1000 行。
-- 提交前的检查：
 
 ```bash
-radon cc -n C src/   # 有输出即失败
-lint-imports         # core 不能依赖 cli 或 report
-pytest
+uv sync --python 3.12                   # 建虚拟环境并安装依赖（含开发依赖）
+uv run api-regress validate suite.yaml  # 在开发环境里运行命令
+```
+
+提交前的检查（CI 同样执行，见 `.github/workflows/ci.yml`）：
+
+```bash
+uv run radon cc -n C src/   # 有输出即失败
+uv run lint-imports         # core 不能依赖 cli 或 report
+uv run pytest
 ```
 
 项目规则和提交约定见 [CLAUDE.md](CLAUDE.md)。

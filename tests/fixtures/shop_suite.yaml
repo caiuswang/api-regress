@@ -1,0 +1,50 @@
+version: 1
+
+targets:
+  baseline:
+    base_url: https://api.shop.example.com
+    headers:
+      Authorization: "Bearer ${BASE_TOKEN}"
+  candidate:
+    base_url: https://api.shop.example.com      # S2：两侧可以是同一个地址
+    headers:
+      Authorization: "Bearer ${CAND_TOKEN}"
+
+defaults:
+  timeout: 10          # 秒
+  concurrency: 4
+  retries: 1           # 只对连接错误和超时重试，任何状态码都不重试
+  compare: structure   # structure | values
+  success: "body.code == 0"      # 只对 JSON 响应求值，见 §7.3
+  headers:
+    Accept: application/json
+  rules:
+    - path: "**.updated_at"
+      ignore: true
+    - path: "**.amount"
+      decimal: {}
+    - path: "**.price"
+      decimal: {}
+
+requests:
+  - name: health
+    method: HEAD
+    path: /health
+
+  - name: order-list
+    method: GET
+    path: /v1/orders
+    query: { page: "1", size: "20" }   # 值一律加引号
+    # 分页列表数据会变，保持默认的 schema 模式，不要用 keyed
+
+  - name: order-detail
+    method: GET
+    path: /v1/orders/10086
+    compare_headers: [Content-Type]
+    rules:
+      - path: data.amount
+        on_value_change: breaking    # 固定订单，金额也要比值
+      - path: data.items             # array 规则写在数组本身的路径上
+        array: { keys: [sku_id] }    # 写了 keys 即为 keyed 模式
+      - path: data.coupon
+        nullable: true

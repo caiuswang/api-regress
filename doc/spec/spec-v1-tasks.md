@@ -24,7 +24,7 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 
 | 任务 | 状态 | 主要模块 | 覆盖的 AC | 测试方式 |
 |---|---|---|---|---|
-| T1 | 未开始 | config / paths / rules / validate | 01, 02, 22, 36（检查本身能跑） | 纯单元测试 |
+| T1 | 待 review | config / paths / rules / validate | 01, 02, 22, 36（检查本身能跑） | 纯单元测试 |
 | T2 | 未开始 | jsonload / diff | 04–09, 16–21 | 表驱动单元测试 |
 | T3 | 未开始 | expr | 24, 25 | 单元测试，含恶意用例 |
 | T4 | 未开始 | runner / status / service / run | 10–15, 23, 30, 31, 34, 35 | mock 服务集成测试 |

@@ -55,7 +55,7 @@ flowchart LR
 | 请求状态判定 | 有序的 `(谓词, 状态, 提示)` 列表，取第一个匹配项 |
 | diff | 按 JSON 类型分发到不同函数 |
 | 数组模式 | `dict[mode, fn]` 分发 |
-| 规则合并 | 对每个属性用 `max(key=...)` 选胜者 |
+| 规则合并 | 对每个属性用 `max(key=...)` 选胜者（已实现，见 [doc/dev/architecture.md](../dev/architecture.md)） |
 | 退出码 | 按 2>3>1>4>0 的顺序排列谓词列表，取第一个满足的 |
 
 ## 2. JSON 解析与数字（已实测）
@@ -84,7 +84,7 @@ flowchart LR
 - **枚举**：以下取值都与 spec 保持一致。
   - 请求状态
   - finding 类型和级别
-  - warning code：`array_degraded_to_schema`、`array_empty`、`rule_ineffective_in_schema`、`rule_under_ignored`、`index_rule_ineffective`、`both_non_2xx`、`json_parse_failed`、`nan_or_infinity`、`duplicate_key`、`success_eval_error`、`second_sample_unavailable`、`fingerprint_mismatch`
+  - warning code：`array_degraded_to_schema`、`array_empty`、`rule_ineffective_in_schema`、`rule_under_ignored`、`index_rule_ineffective`、`both_non_2xx`、`json_parse_failed`、`nan_or_infinity`、`duplicate_key`、`success_eval_error`、`second_sample_unavailable`、`fingerprint_mismatch`；另有 `env_var_missing`，只出现在 `validate` 的输出里
 - **finding 的字段**：
   - `finding_id`：对 `请求名 + 类型 + 具体路径` 取 hash。keyed 模式下具体路径用 key 值，因此跨运行也稳定；schema 模式下用泛化路径；非 body 的 finding 用伪路径。
   - `path`、`path_tokens`、`generalized_path`
@@ -121,6 +121,6 @@ flowchart LR
 
 ## 7. 依赖
 
-httpx[brotli]、pydantic v2、PyYAML（只用 `safe_load` / `compose`）、Jinja2、simpleeval、radon、import-linter。
+httpx[brotli]、pydantic v2、PyYAML（只用 `safe_load` / `compose`）、Jinja2、simpleeval、Click（CLI，见 spec D5）、radon、import-linter。
 
 测试使用 pytest、pytest-httpserver 或 `httpx.MockTransport`，以及 deepdiff（只用于交叉校验）。

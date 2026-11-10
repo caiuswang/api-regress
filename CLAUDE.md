@@ -39,11 +39,11 @@ api-regress 是一个给 QA 做 API 回归用的 Python CLI 工具，开发也�
 
 ## 检查命令
 
-CI 必须通过以下检查：
+依赖用 uv 管理：`uv sync --python 3.12` 安装，命令前加 `uv run`。CI 见 `.github/workflows/ci.yml`，必须通过以下检查：
 
 ```
 radon cc -n C src/     # 有输出即失败
-lint-imports           # import-linter：core 不能 import cli 或 report
+lint-imports           # import-linter：core 不能 import cli 或 report（契约在 pyproject.toml）
 pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_name
 ```
 

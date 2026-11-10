@@ -94,7 +94,7 @@ api-regress accept   <run-dir> --snapshot DIR
 
 | 命令 | 需要的 target | 行为 | stdout 摘要 | 退出码 |
 |---|---|---|---|---|
-| `validate` | 无（只做静态检查） | 校验 suite 的语法和字段、路径、表达式白名单。缺少环境变量**按 target 分别列出，只给 warning** | `OK, N requests` + warning 列表 | 0 / 2 |
+| `validate` | 无（只做静态检查） | 校验 suite 的语法和字段、路径、表达式白名单。缺少环境变量**按 target 分别列出，只给 warning**（code `env_var_missing`）；静态可判定的无效规则也给 warning（§6.1、§6.3、§7.6） | `OK, N requests` + warning 列表 | 0 / 2 |
 | `run` | 两侧 | 基线串行请求 2 次，候选请求 1 次，然后对比 | 各级别 finding 数、各请求状态数、报告路径 | 0 / 1 / 2 / 3 / 4 |
 | `record` | 只需要 baseline | 每条请求串行请求 2 次，**按请求合并**写入快照。失败的请求保留旧 sample；`--clean` 会先清空快照 | 写入数、未写入的请求及原因、**不稳定字段建议** | 0 / 2 / 3 / 4 |
 | `compare` | 只需要 candidate | 基线读快照，候选请求 1 次，然后对比 | 同 `run` | 0 / 1 / 2 / 3 / 4 |
@@ -106,7 +106,7 @@ api-regress accept   <run-dir> --snapshot DIR
 |---|---|
 | 0 | 全部成功：没有达到 `--fail-on` 的 finding，所有请求都是 `ok` 或 `unsupported`；record / accept 全部写入 |
 | 1 | 存在达到 `--fail-on` 级别的 finding |
-| 2 | suite 有问题：不合法、本命令需要的环境变量缺失、出现写方法、表达式没通过白名单、快照 manifest 版本不兼容 |
+| 2 | suite 有问题：不合法、本命令需要的环境变量缺失、出现写方法、表达式没通过白名单、快照 manifest 版本不兼容；命令行参数写错（同时打印用法说明） |
 | 3 | 工具自身出错：无法写入报告或快照、快照损坏、内部异常 |
 | 4 | 至少有一条请求是 `error` 或 `inconclusive`（record / accept 指：至少有一条请求没写入），并且没有触发 1 |
 
@@ -172,11 +172,14 @@ requests:
 **规则说明**
 - **name**：只能包含 `[A-Za-z0-9_.-]`，suite 内唯一。
 - **字段名拼写**：拼错会报错，并给出出错的行号。
-- **环境变量**：只替换字符串值里的 `${VAR}`，支持 `${VAR:-默认值}`。每个命令只解析它需要的那一侧 target（见 §4.1）。
+- **环境变量**：只替换字符串值里的 `${VAR}`，支持 `${VAR:-默认值}`：变量未设置**或为空**时取默认值（与 shell 一致）。默认值里不能出现 `$` 和 `}`，不支持嵌套；无法识别的 `${...}` 写法（如 `${A-x}`、`${ A }`、`${A:-${B}}`）直接报配置错误。每个命令只解析它需要的那一侧 target（见 §4.1）。
 - **YAML 常见坑**（在 doc/user 里写清楚）：
   - `007` 会被解析成数字 7，`1.10` 会被解析成 1.1，`on`/`no` 会被解析成布尔值。
   - 所以 query 的值和数字字面量都要加引号。
-- **数组对齐只有一种写法**：`array: {mode: schema|keyed|positional|unordered, keys: [...]}`。写了 `keys` 就默认用 keyed。原需求里的 "array_keys" 就是这里的 `keys`。
+- **数组对齐只有一种写法**：`array: {mode: schema|keyed|positional|unordered, keys: [...]}`。写了 `keys` 就默认用 keyed。原需求里的 "array_keys" 就是这里的 `keys`。写了 `keys` 时 `mode` 只能是 `keyed`；`mode: keyed` 必须写 `keys`。
+- **每条规则至少要有一个属性**（`ignore`、`decimal`、`scale_level`、`on_value_change`、`array`、`nullable` 之一），只写 `path` 视为配置错误。
+- **同一个映射里出现重复的 YAML key** 视为配置错误（YAML 解析器默认会静默取后一个）。
+- **请求级 `success`**：写了就覆盖 defaults 里的 `success`；写成 `success: null` 表示这条请求不判定 success；没写就沿用 defaults。
 
 ## 6. 路径与规则
 
@@ -186,8 +189,11 @@ requests:
 | `data.items` | 逐级访问对象 key，开头不写 `$` |
 | `data.items[0]` | 数组下标（只在 positional 模式下才有意义） |
 | `data.items[*].price` | 任意数组元素，不管哪种模式都能匹配 |
-| `meta["x.y"]` | key 里有 `.`、`[` 或 `"` 时，用引号括起来 |
+| `meta["x.y"]` | key 里有特殊字符时用引号括起来，见下方"其他限制" |
 | `**.updated_at` | 任意深度，也包括 0 层，所以能匹配根上的 `updated_at` |
+| `$` | 根节点本身，只能单独写。例如响应体本身是数组时：`path: "$"` 加 `array: {keys: [id]}`；根数组的元素写 `[*].price` |
+
+**其他限制**：除了单独的 `$`，路径开头不写 `$`；`**` 不能放在末尾，也不能连续出现；字段名里有 `.`、`[`、`]`、`"`、`*` 或空白，或者以 `$` 开头时，用 `["..."]` 括起来，引号内用 `\"`、`\\` 转义。
 
 **下标写法的限制**：对 schema 或 keyed 模式的数组写了字面下标（例如 `items[0].x`），规则不会生效，并产生 warning。
 
@@ -214,6 +220,7 @@ requests:
 **ignore 剪枝**：
 - 一个节点最终 `ignore: true` 时，它的整棵子树都不再对比。
 - 子树里再写的规则（包括 `ignore: false`）**都不生效**。能静态判断出这种情况时，`validate` 给出 warning。
+- 规则所在的节点本身被另一条更优先的 `ignore: true` 覆盖、而它自己没写 `ignore` 时（例如全局 `**.updated_at` 忽略、请求级给 `data.updated_at` 配了 `on_value_change` 却忘了写 `ignore: false`），这条规则同样不生效，`validate` 也给出 warning。
 
 ## 7. 对比语义
 
@@ -450,6 +457,7 @@ snapshot/
 | L9 | 只在候选侧不稳定的字段，建议里不会列出 | 接受这个限制 |
 | L10 | 分页列表或实时列表用 keyed 模式，会因为数据移动而持续报 `element_missing` | 这类数组用 schema 模式（文档里给出选型表） |
 | L11 | 后端用 float 输出金额、不保留末尾的 0（如 `12.5`）时，原本就是 2 位的值也可能显示成 1 位，无法判断精度是否变了 | 文档说明：decimal 规则需要后端稳定输出固定的小数位 |
+| L12 | 请求 name 区分大小写，`order-list` 和 `Order-List` 是两条请求；快照文件按 name 命名，在不区分大小写的文件系统（macOS 默认、Windows）上会互相覆盖 | 文档提醒不要用只差大小写的 name |
 
 ## 12. 端到端示例与验收
 
@@ -575,4 +583,8 @@ snapshot/
 | D2 | 标量在 null 与非 null 之间变化，记为 `nullability_changed`（suspicious/info）；对象或数组变成 null 仍记 breaking | 已确认（2026-11-09） |
 | D3 | `array_length_changed` 默认记 info，只有空与非空之间的变化记 suspicious | 已确认（2026-11-09） |
 | D4 | 文档拆成需求本体和 `spec-v1-design.md` 两份 | 已确认（2026-11-09） |
-| D5 | CLI 框架用 argparse 还是 Typer | 实现时再定 |
+| D5 | CLI 框架用 argparse 还是 Typer | 用 Click：argparse 自带功能太少，子命令、参数类型校验等都要自己写（已确认，2026-11-10） |
+| D6 | 请求级 `success: null` 的含义 | 表示该请求不判定 success，不再继承 defaults（已确认，2026-11-10） |
+| D7 | 根节点（如响应体本身是数组）怎么写规则 | 单独的 `$` 表示根节点（§6.1）（已确认，2026-11-10） |
+| D8 | 请求 name 查重是否区分大小写 | 区分大小写；快照文件名冲突的风险见 §11 L12（已确认，2026-11-10） |
+| D9 | 规则正好落在被 ignore 的节点本身时是否提示 | 自身没写 `ignore` 时给 warning（§6.3）（已确认，2026-11-10） |
