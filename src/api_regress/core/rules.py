@@ -4,23 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
-
-from pydantic import BaseModel, ConfigDict
+from typing import Any
 
 from api_regress.core import paths
 from api_regress.core.config import RULE_ATTRS, ArrayRule, DecimalRule, Request, Rule, Suite
-from api_regress.core.models import Level, Loc, WarningItem, format_loc
+from api_regress.core.models import Level, Loc, RuleRef, WarningItem, format_loc
 
-Scope = Literal["defaults", "request"]
 _SCOPE_RANK = {"defaults": 0, "request": 1}
-
-
-class RuleRef(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    scope: Scope
-    index: int
 
 
 @dataclass(frozen=True, eq=False)
@@ -81,6 +71,7 @@ class RuleSet:
     def __init__(self, rules: Sequence[CompiledRule]):
         self.rules = list(rules)
         self._cache: dict[tuple[paths.Token, ...], Resolved] = {}
+        self._indices = {tok.value for r in self.rules for tok in r.tokens if isinstance(tok, paths.Index)}
 
     @classmethod
     def for_request(cls, suite: Suite, request: Request, request_index: int | None = None) -> RuleSet:
@@ -89,8 +80,18 @@ class RuleSet:
     def matching(self, path: Sequence[paths.Token]) -> list[CompiledRule]:
         return [r for r in self.rules if paths.match(r.tokens, path)]
 
+    def _cache_key(self, path: Sequence[paths.Token]) -> tuple[paths.Token, ...]:
+        """匹配结果相同的路径共用缓存：keyed 元素只能被 [*] 和 ** 匹配，等同于 [*]；
+        没有任何规则写到的下标同理。否则大数组的每个元素都要把所有规则重新匹配一遍。"""
+        return tuple(
+            paths.ANY
+            if isinstance(tok, paths.KeyedElem) or (isinstance(tok, paths.Index) and tok.value not in self._indices)
+            else tok
+            for tok in path
+        )
+
     def resolve(self, path: Sequence[paths.Token]) -> Resolved:
-        key = tuple(path)
+        key = self._cache_key(path)
         if key not in self._cache:
             self._cache[key] = self._resolve(key)
         return self._cache[key]
@@ -178,23 +179,41 @@ def _check_index(rule: CompiledRule, context: Sequence[CompiledRule]) -> str | N
     return None
 
 
+def _unpaired_array(rule: CompiledRule, context: Sequence[CompiledRule], modes: set[str]) -> str | None:
+    """规则路径经过的 `[*]` 数组里，第一个不可能是 modes 之一（只能是 schema 等不配对模式）的数组。"""
+    for arr in _array_prefixes(rule.tokens, paths.AnyIndex):
+        if not _may_have_mode(arr, context, modes):
+            return paths.format_path(arr)
+    return None
+
+
 def _check_value_in_schema(rule: CompiledRule, context: Sequence[CompiledRule]) -> str | None:
     if rule.rule.on_value_change is None:
         return None
-    for arr in _array_prefixes(rule.tokens, paths.AnyIndex):
-        if not _may_have_mode(arr, context, {"keyed", "positional", "unordered"}):
-            where = paths.format_path(arr)
-            return (
-                f"规则 {rule.rule.path!r} 配了 on_value_change，但数组 {where} 是 schema 模式，"
-                "元素内部不比较值；需要比较值请改用 keyed 模式"
-            )
-    return None
+    where = _unpaired_array(rule, context, {"keyed", "positional"})
+    if where is None:
+        return None
+    return (
+        f"规则 {rule.rule.path!r} 配了 on_value_change，但数组 {where} 的元素没有逐个配对（schema 或 unordered 模式），"
+        "元素内部不比较值；需要比较值请改用 keyed 模式"
+    )
+
+
+def _check_nested_array(rule: CompiledRule, context: Sequence[CompiledRule]) -> str | None:
+    array = rule.rule.array
+    if array is None or array.mode == "schema":
+        return None
+    where = _unpaired_array(rule, context, {"keyed", "positional", "unordered"})
+    if where is None:
+        return None
+    return f"规则 {rule.rule.path!r}（mode: {array.mode}）所在的数组位于 schema 数组 {where} 的元素内部，外层没有配对，内层按 schema 比较"
 
 
 _STATIC_CHECKS = (
     ("rule_under_ignored", _check_under_ignored),
     ("index_rule_ineffective", _check_index),
     ("rule_ineffective_in_schema", _check_value_in_schema),
+    ("rule_ineffective_in_schema", _check_nested_array),
 )
 
 

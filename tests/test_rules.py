@@ -194,6 +194,31 @@ def test_value_rule_in_keyed_array_ok():
     assert codes(suite) == []
 
 
+def test_value_rule_in_unordered_array_warns():
+    """D13：unordered 的元素也没有逐个配对，元素字段上的 on_value_change 不生效。"""
+    suite = make_suite(
+        request_rules=[
+            {"path": "data.tags", "array": {"mode": "unordered"}},
+            {"path": "data.tags[*].price", "on_value_change": "breaking"},
+        ]
+    )
+    assert codes(suite) == [("rule_ineffective_in_schema", "data.tags[*].price", "r")]
+
+
+@pytest.mark.parametrize(
+    ("outer", "warned"),
+    [(None, True), ({"mode": "unordered"}, False), ({"keys": ["id"]}, False), ({"mode": "positional"}, False)],
+    ids=["schema", "unordered", "keyed", "positional"],
+)
+def test_nested_array_rule_in_schema_warns(outer, warned):
+    """D14：schema 数组元素里的数组，非 schema 的 array 规则不生效。"""
+    rules = [{"path": "data.list[*].sub", "array": {"keys": ["id"]}}]
+    if outer:
+        rules.insert(0, {"path": "data.list", "array": outer})
+    expected = [("rule_ineffective_in_schema", "data.list[*].sub", "r")] if warned else []
+    assert codes(make_suite(request_rules=rules)) == expected
+
+
 def test_decimal_rule_in_schema_array_ok():
     suite = make_suite(request_rules=[{"path": "data.list[*].price", "decimal": {}}])
     assert codes(suite) == []

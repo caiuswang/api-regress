@@ -259,10 +259,12 @@ requests:
 - **3xx**：工具不跟随重定向，3xx 状态码本身就参与对比。
 
 **body 的判定**
-- **是否为 JSON**：Content-Type 是 `application/json` 或 `*+json` 时直接解析；没有 Content-Type 时尝试解析一次。
+- **是否为 JSON**：Content-Type 是 `application/json` 或任意 `*/*+json`（如 `application/problem+json`、`model/gltf+json`）时直接解析；没有 Content-Type 时尝试解析一次。
 - **声明是 JSON 但解析失败**：这一侧按非 JSON 处理，并产生 warning。
 - **一侧是 JSON、另一侧不是**：`body_kind_changed`（breaking）。
-- **出现 NaN、Infinity、重复的 key**：产生 warning。重复 key 取最后一个值。
+- **出现 NaN、Infinity、重复的 key**：产生 warning（每个 body 每类最多一条）。重复 key 取最后一个值。
+- **嵌套超过 200 层**（只数对象和数组）：按"声明是 JSON 但解析失败"处理。charset 不是文本编码（如 `hex`）时按 UTF-8 解码。
+- **孤立的 UTF-16 代理字符**（如 `"\ud800"`）：替换成 `U+FFFD`，不产生 warning。
 
 **响应头对比**：默认不比较。列在 `compare_headers` 里的头按以下规则：
 - 候选缺失：breaking。
@@ -302,8 +304,12 @@ requests:
 **补充说明**
 - **类型**：取值为 object、array、string、number、boolean、null。int、float、Decimal 都算 number，所以 `1` 和 `1.0` 不算类型变化。
 - **只报最高层节点**：对象被删除、或者类型变化（包括变成 null）时，只在这个节点上报一条，不再展开它的子字段。
-- **`nullable: true`**：这个字段上的 `nullability_changed` 不再报。
+- **`nullable: true`**：声明这个字段可以是 null。标量在 null 与非 null 之间变化时不再报 `nullability_changed`；对象、数组与 null 之间变化时也不再报 `type_changed`（D12）。两个非 null 类型之间的变化照常报。
 - **字段改名**：会报成 `field_removed` 和 `field_added` 两条。这符合预期，doc/user 里要配一个示例说明。
+- **一个节点最多报一条结构类 finding**（缺失、类型、可空性三者之一）。值类 finding 可以叠加在上面：
+  - `scale_changed` 和 `value_changed` 可以同时出现。
+  - 标量在 null 与非 null 之间变化、并且配了值比较（`on_value_change` 或 `compare: values`）时，除了 `nullability_changed`，还按值比较的级别报 `value_changed`；`nullable: true` 只去掉前者（D10）。
+- **数值相等**：值比较按数值进行，`1` 等于 `1.0`；`NaN` 和 `NaN` 视为相等。
 
 ### 7.5 decimal 规则
 - **小数位怎么算**：按 JSON 原文计算。
@@ -318,7 +324,7 @@ requests:
   | `-0.00` | 2 |
 
 - **判定**：两侧小数位不同时，记 `scale_changed`。只有同时配了 `on_value_change`，才会比较数值本身。
-- **`allow_string: true`**：`"12.50"` 这种字符串也按 decimal 处理。但如果一侧是字符串、另一侧是数字，仍然算 `type_changed`。
+- **`allow_string: true`**：`"12.50"` 这种字符串也按 decimal 处理。但如果一侧是字符串、另一侧是数字，仍然算 `type_changed`。字符串必须符合 JSON 数字的写法，`"abc"`、`"NaN"`、`"1_000"` 不参与小数位比较；值比较时 `"12.50"` 和 `"12.5"` 相等。
 
 ### 7.6 数组对齐
 
@@ -331,11 +337,33 @@ requests:
 
 **schema 模式的细则**
 - **字段消失**：某个字段在基线的任一元素里出现过，而候选的所有元素里都没有，记 `field_removed`。
-- **类型比较**：先去掉 null，再比较两侧的类型集合；候选出现了新的类型，记 `type_changed`。可空性单独按 `nullability_changed` 判断。
+- **类型比较**：先去掉 null，再比较两侧的类型集合；候选出现了新的类型，记 `type_changed`，不再比较它下面的字段。
+- **null 的出现与消失**（D11，与 D2 一致）：
+  - 候选新出现了 null：基线在这里出现过对象或数组时记 `type_changed`（breaking），否则记 `nullability_changed`（suspicious）。
+  - 基线只出现过 null、候选出现了值：值里有对象或数组时记 `type_changed`（breaking），否则记 `nullability_changed`（info）。
+  - 基线出现过 null 和值、候选只剩值：记 `nullability_changed`（info）。
+  - 配了 `nullable: true` 时，以上都不报（D12）。
+- **子字段的缺失要看父节点**：只有父节点在另一侧仍然出现过对象（或数组），子字段（或数组元素）的消失和新增才单独报。父节点在另一侧已经不是对象，说明变化发生在父节点上，子字段不再重复报。
 - **decimal**：候选的小数位集合不是基线的子集，记 `scale_changed`。finding 里同时给出两侧的小数位集合，以及一个示例下标。
-- **任一侧为空**：只比较长度，并产生 warning："某侧为空，未比较元素结构"。
-- **值比较不生效**：`on_value_change` 和 `compare: values` 在 schema 数组内部不起作用，运行时产生 warning。如果需要比较值，改用 keyed 模式。
-- **keyed 降级**：key 字段缺失或者重复时，这个数组降级为 schema 模式，并产生 warning。
+- **一侧为空、另一侧非空**：只比较长度，并产生 warning："某侧为空，未比较元素结构"。两侧都为空时不比较，也不提示（D15）。
+- **嵌套数组**（D14）：schema 数组元素里的数组也并入同一张表，按 schema 方式比较，示例下标是外层数组的下标。
+  - 内层数组的长度不比较。
+  - 内层数组在一侧全部为空、另一侧有元素时，不报 `field_removed` / `field_added`，只产生 `array_empty` warning。
+  - 外层元素没有配对，内层也无法配对：写在内层数组上的非 schema `array` 规则不生效，运行时产生 `rule_ineffective_in_schema` warning，`validate` 能静态判断时也给出。
+- **值比较不生效**：`on_value_change` 和 `compare: values` 在 schema 数组内部不起作用，运行时产生 warning（同一个泛化路径只提示一次）。如果需要比较值，改用 keyed 模式。
+- **keyed 降级**：key 字段缺失或者重复时，这个数组降级为 schema 模式，并产生 warning。元素不是对象、key 的值是 null、对象或数组，都按"缺失"处理。
+
+**keyed 模式的细则**
+- **key 相等**：按类型和值比较，数字按数值（`1` 与 `1.0` 是同一个 key），`1` 与 `"1"` 是不同的 key。
+- **路径展示**：多个 key 用逗号连接，如 `items[id=1,color=red]`；字符串值会和数字、`true`/`false`/`null` 混淆，或含空白、`,`、`=`、方括号、引号时，加双引号。
+
+**unordered 模式的细则**（D13）
+- **结构**：元素的结构按 schema 模式比较（字段消失、类型、可空性、decimal 都和 schema 一样），所以元素里删字段、改类型仍是 breaking。数组长度不单独报。
+- **值**：把元素当作多重集合比较，不相等时在数组路径上记一条 `value_changed`，级别取数组节点的 `on_value_change`，没配时为 suspicious。
+  - 数字按数值比较；配了 `decimal.allow_string` 的字段，数字字符串也按数值比较。
+  - 元素里被 ignore 的字段不参与比较。
+  - 元素里的嵌套数组：配了 `mode: positional` 时按顺序比较，其他情况按多重集合比较。
+- **元素内部的值规则不生效**：元素字段上的 `on_value_change` 和 schema 模式一样产生 `rule_ineffective_in_schema` warning。
 
 ### 7.7 asserts（高级用法，可选）
 
@@ -588,3 +616,9 @@ snapshot/
 | D7 | 根节点（如响应体本身是数组）怎么写规则 | 单独的 `$` 表示根节点（§6.1）（已确认，2026-11-10） |
 | D8 | 请求 name 查重是否区分大小写 | 区分大小写；快照文件名冲突的风险见 §11 L12（已确认，2026-11-10） |
 | D9 | 规则正好落在被 ignore 的节点本身时是否提示 | 自身没写 `ignore` 时给 warning（§6.3）（已确认，2026-11-10） |
+| D10 | 同一个节点上可以同时有哪些 finding | 结构类（缺失、类型、可空性）只报一条；值类可以叠加：`scale_changed` 与 `value_changed` 并存；标量变 null 且配了值比较时，另报 `value_changed`，`nullable` 不影响它（§7.4）（已确认，2026-11-10） |
+| D11 | schema 数组里对象/数组字段与 null 之间的变化 | 与 D2 一致，记 `type_changed`（breaking）；标量仍记 `nullability_changed`（§7.6）（已确认，2026-11-10） |
+| D12 | `nullable: true` 是否也放过对象/数组变成 null | 放过：`nullable` 表示 null 是合法值，对象、数组与 null 之间的变化不再报 `type_changed`（§7.4）（已确认，2026-11-10） |
+| D13 | unordered 模式下元素的结构变化（删字段、改类型）怎么报 | 元素结构按 schema 模式比较，照常报 breaking；多重集合的值比较叠加在上面（§7.6）（已确认，2026-11-10） |
+| D14 | schema 数组元素里的嵌套数组 | 一律按 schema 展平；内层长度不比较；内层一侧全空只给 warning；内层的非 schema `array` 规则给 warning（§7.6）（已确认，2026-11-10） |
+| D15 | schema 数组两侧都为空时是否提示 | 不提示，只在一侧为空、另一侧非空时提示（§7.6）（已确认，2026-11-10） |

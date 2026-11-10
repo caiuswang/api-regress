@@ -53,19 +53,15 @@ flowchart LR
 | 位置 | 写法 |
 |---|---|
 | 请求状态判定 | 有序的 `(谓词, 状态, 提示)` 列表，取第一个匹配项 |
-| diff | 按 JSON 类型分发到不同函数 |
-| 数组模式 | `dict[mode, fn]` 分发 |
+| diff | 按 JSON 类型分发到不同函数（已实现，见 doc/dev） |
+| 数组模式 | `dict[mode, fn]` 分发（已实现，见 doc/dev） |
 | 规则合并 | 对每个属性用 `max(key=...)` 选胜者（已实现，见 [doc/dev/architecture.md](../dev/architecture.md)） |
 | 退出码 | 按 2>3>1>4>0 的顺序排列谓词列表，取第一个满足的 |
 
 ## 2. JSON 解析与数字（已实测）
 
-- 用 `json.loads(text, parse_float=Decimal, parse_constant=..., object_pairs_hook=...)` 解析，这三个参数可以同时使用。
-  - 重复 key 由 `object_pairs_hook` 检测。这一步拿不到路径，所以 warning 的 `path` 字段是可选的。
-  - `parse_constant` 处理 NaN 和 Infinity。`Decimal('NaN')` 和自身不相等，与其他数比较大小会抛异常，需要单独处理。
-- 解码按 charset 进行，默认 UTF-8。`response.text` 会保留 BOM，必须先去掉再解析。
-- 小数位按 `max(0, -d.as_tuple().exponent)` 计算，**不要调用 `normalize()`**，否则 `1.10` 会变成 `1.1`，正好掩盖了要检测的变化。
-- 不能在 JSON 输出里保留数字的原文。`str(Decimal('1.50E1'))` 得到 `'15.0'`，所以 `result.json` 里统一输出 Decimal 的规范字符串，这个字符串的小数位与原文相同。快照保存 body 的原文，以快照为准。
+- 解析、Decimal、重复 key、NaN（含比较时的特殊处理）、BOM、charset、小数位的计算方式**已实现**，见 [doc/dev/architecture.md](../dev/architecture.md) 的「JSON 解析」一节。
+- 尚未落地（T4）：不能在 JSON 输出里保留数字的原文。`str(Decimal('1.50E1'))` 得到 `'15.0'`，所以 `result.json` 里统一输出 Decimal 的规范字符串，这个字符串的小数位与原文相同。快照保存 body 的原文，以快照为准。
 
 ## 3. 表达式引擎（simpleeval，已实测）
 

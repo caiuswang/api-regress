@@ -105,7 +105,9 @@ api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-de
 | [doc/spec/spec-v1-design.md](doc/spec/spec-v1-design.md) | 技术设计约束 |
 | [doc/spec/spec-v1-tasks.md](doc/spec/spec-v1-tasks.md) | 任务拆分与进度 |
 | [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、环境变量、YAML 常见坑、路径写法 |
+| [doc/user/compare.md](doc/user/compare.md) | 对比规则：差异类型与级别、规则属性、数组模式怎么选 |
 | [doc/dev/architecture.md](doc/dev/architecture.md) | 模块职责、关键路径、主流程（随实现补充） |
+| [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md) | 对比引擎在各种组合下的实际输出（自动生成） |
 
 ## 开发
 
@@ -124,5 +126,7 @@ uv run radon cc -n C src/   # 有输出即失败
 uv run lint-imports         # core 不能依赖 cli 或 report
 uv run pytest
 ```
+
+改了对比行为时，`tests/test_diff_combinations.py` 会失败：确认变化符合预期后运行 `uv run python scripts/gen_diff_combinations.py` 重新生成 [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md)。
 
 项目规则和提交约定见 [CLAUDE.md](CLAUDE.md)。

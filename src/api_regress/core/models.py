@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+from api_regress.core import paths
 
 Level = Literal["breaking", "suspicious", "info"]
 Side = Literal["baseline", "candidate"]
@@ -50,3 +52,98 @@ def format_loc(loc: Sequence[str | int]) -> str:
         else:
             out += f".{part}" if out else str(part)
     return out
+
+
+# ---------- finding ----------
+
+FindingType = Literal[
+    "status_changed",
+    "body_kind_changed",
+    "business_error",
+    "header_missing",
+    "header_changed",
+    "field_removed",
+    "type_changed",
+    "nullability_changed",
+    "scale_changed",
+    "field_added",
+    "array_length_changed",
+    "element_missing",
+    "element_added",
+    "value_changed",
+    "assert_failed",
+    "assert_error",
+]
+
+
+class RuleRef(BaseModel):
+    """规则的位置：defaults.rules[index] 或本请求的 rules[index]。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    scope: Literal["defaults", "request"]
+    index: int
+
+
+class Absent(BaseModel):
+    """字段不存在，和 null 区分开。输出为 {"absent": true}。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    absent: Literal[True] = True
+
+
+ABSENT = Absent()
+
+ValueType = Literal["object", "array", "string", "number", "boolean", "null", "absent"]
+
+TokenKind = Literal["key", "index", "any", "keyed"]
+
+
+class PathToken(BaseModel):
+    """具体路径的一级：key / index（positional）/ any（schema、unordered）/ keyed（展示用标签）。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: TokenKind
+    value: str | int | None = None
+
+
+_TOKEN_KIND: dict[type, tuple[TokenKind, str | None]] = {
+    paths.Key: ("key", "name"),
+    paths.Index: ("index", "value"),
+    paths.AnyIndex: ("any", None),
+    paths.KeyedElem: ("keyed", "label"),
+}
+
+
+def to_path_tokens(tokens: Sequence[paths.Token]) -> list[PathToken]:
+    out = []
+    for tok in tokens:
+        kind, attr = _TOKEN_KIND[type(tok)]
+        out.append(PathToken(kind=kind, value=getattr(tok, attr) if attr else None))
+    return out
+
+
+class Finding(BaseModel):
+    """一条差异，参与退出码计算。
+
+    body 的 finding：`path` 是具体路径，`generalized_path` 可以直接写进规则。
+    非 body 的 finding 用伪路径（`$status`、`$header.Content-Type` 等），`path_tokens` 为空。
+    schema 数组里的 finding：两侧的值是类型集合或小数位集合，并附 `example_index`。
+    `base_type` / `cand_type` 是两侧值的 JSON 类型（缺失时为 `absent`），用来区分 `12.50` 和 `"12.50"`、
+    以及真实的 `{"absent": true}` 和缺失；值是集合、长度等汇总信息时为 None。
+    """
+
+    type: FindingType
+    level: Level
+    path: str
+    generalized_path: str
+    path_tokens: list[PathToken] = []
+    base_value: Any = None
+    cand_value: Any = None
+    base_type: ValueType | None = None
+    cand_type: ValueType | None = None
+    example_index: int | None = None
+    rule_refs: list[RuleRef] = []
+    message: str | None = None

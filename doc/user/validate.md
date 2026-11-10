@@ -47,7 +47,7 @@ INVALID, 2 error(s)
 | `env_var_missing` | 某个 target（或两侧共用的部分）引用的环境变量没有设置 | 跑 `run` / `record` / `compare` 前设置好；只影响对应命令需要的那一侧 |
 | `rule_under_ignored` | 规则写在一个已经被 `ignore: true` 的节点下面；或者规则所在的节点本身被更宽泛的 ignore 覆盖，而它自己没写 `ignore` | 删掉它；或者把父节点的 ignore 改得更精确；节点本身被覆盖时，在这条规则上加 `ignore: false` |
 | `index_rule_ineffective` | 规则用了字面下标（如 `items[0].x`），但该数组不是 positional 模式 | 改用 `items[*].x`，或者给数组配 `array: {mode: positional}` |
-| `rule_ineffective_in_schema` | `on_value_change` 写在 schema 模式数组的元素里，schema 模式不比较元素的值 | 给数组配 `array: {keys: [...]}` 改用 keyed 模式 |
+| `rule_ineffective_in_schema` | `on_value_change` 写在 schema 或 unordered 模式数组的元素里，这两种模式不逐个配对元素，不比较元素字段的值；或者 schema 数组元素里的内层数组配了非 schema 的 `array` 规则，外层没有配对，内层也只能按 schema 比较 | 给外层数组配 `array: {keys: [...]}` 改用 keyed 模式 |
 
 有字段的值来自缺失的环境变量、而且这个字段不是字符串（比如 `timeout: "${T}"`）时，它的类型要等变量设置后才能确定。此时 `validate` 仍然通过，但会列出这些字段，并**跳过规则检查**；设置好变量再跑一次，就能得到完整结果。
 
