@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -20,7 +21,7 @@ from api_regress.cli import main
 from api_regress.core import service
 from api_regress.core.reportdata import Reporter, ReportInput, RequestExtras
 from api_regress.core.samples import Sample
-from api_regress.report import common, html, junit, md
+from api_regress.report import common, html, junit, md, sidediff
 from tests.mock_api import Reply, Server, j, req, run, suite_text
 
 GOLDEN = Path(__file__).parent / "golden"
@@ -309,3 +310,58 @@ def test_cli_prints_report_paths(tmp_path, monkeypatch, capsys):
     assert code == 4
     assert lines[-2] == f"reports: {out / 'report.md'}, {out / 'junit.xml'}"
     assert re.search(r"error", (out / "report.md").read_text())
+
+
+# ---------- body 对照 ----------
+
+
+def _cells(rows):
+    return [(left.lineno, str(left.html), left.kind, right.lineno, str(right.html), right.kind) for left, right in rows]
+
+
+def test_side_diff_pairs_replaced_lines_in_order():
+    base = ["{", '  "a": 1,', '  "b": "x",', "}"]
+    cand = ["{", '  "a": 2,', '  "c": true,', '  "d": 0', "}"]
+    [group] = sidediff.row_groups(base, cand)
+    assert _cells(group) == [
+        (1, "{", "", 1, "{", ""),
+        (2, '  &#34;a&#34;: <span class="hl">1</span>,', "sub", 2, '  &#34;a&#34;: <span class="hl">2</span>,', "add"),
+        (3, '  &#34;<span class="hl">b</span>&#34;: <span class="hl">&#34;x&#34;</span>,', "sub",
+         3, '  &#34;<span class="hl">c</span>&#34;: <span class="hl">true</span>,', "add"),
+        (None, "", "", 4, "  &#34;d&#34;: 0", "add"),
+        (4, "}", "", 5, "}", ""),
+    ]  # fmt: skip
+
+
+def test_side_diff_keeps_only_context_around_changes():
+    base = [f"line {i}" for i in range(20)]
+    cand = [*base[:2], "new", *base[2:17], *base[18:]]
+    groups = sidediff.row_groups(base, cand)
+    assert [[(left.lineno, right.lineno) for left, right in g] for g in groups] == [
+        [(1, 1), (2, 2), (None, 3), (3, 4), (4, 5), (5, 6)],
+        [(15, 16), (16, 17), (17, 18), (18, None), (19, 19), (20, 20)],
+    ]
+    page = str(sidediff.table(base, cand, "基线", "候选"))
+    assert page.count('class="skip"') == 1 and "line 9" not in page
+
+
+def test_side_diff_long_lines_skip_intraline():
+    base, cand = ["a" * 300], ["a" * 299 + "b"]
+    [[(left, right)]] = sidediff.row_groups(base, cand)
+    assert (left.kind, right.kind) == ("sub", "add") and "hl" not in str(left.html + right.html)
+
+
+def test_side_diff_escapes_and_identical_input():
+    page = str(sidediff.table(["<b>&"], ["<i>"], "<基线>", "候选"))
+    assert "<b>" not in page and "<i>" not in page and "&lt;" in page and "&amp;" in page and "&lt;基线&gt;" in page
+    assert sidediff.row_groups(["x"], ["x"]) == []
+
+
+def test_side_diff_stays_fast_when_every_line_changes():
+    """上千行都变了时不能退化成两两比较（原来的 difflib.HtmlDiff 在这里要 10 秒左右）。"""
+    base = [f'    "k{i}": "v-{(i + 1) * 7919 % 1000003:09d}",' for i in range(html.DIFF_MAX_LINES)]
+    cand = [f'    "k{i}": "v-{(i + 1) * 104729 % 1000003:09d}",' for i in range(html.DIFF_MAX_LINES)]
+    start = time.perf_counter()
+    [group] = sidediff.row_groups(base, cand)
+    assert time.perf_counter() - start < 1.0
+    assert len(group) == html.DIFF_MAX_LINES and all(left.kind == "sub" for left, _ in group)

@@ -1,11 +1,10 @@
 """HTML 报告（`report.html`）：单个文件，不依赖外部资源，不带 JS。
 
-Jinja2 开启 autoescape，响应里的内容一律转义；两侧 body 的对照用 `difflib.HtmlDiff` 生成（它自己会转义），
-过大时截断，免得报告打不开、生成太慢。"""
+Jinja2 开启 autoescape，响应里的内容一律转义；两侧 body 的对照由 `report/sidediff.py` 生成（它自己会转义），
+过大时截断，免得报告太大打不开。"""
 
 from __future__ import annotations
 
-import difflib
 from dataclasses import dataclass
 from importlib import resources
 
@@ -14,12 +13,11 @@ from markupsafe import Markup
 
 from api_regress.core.reportdata import ReportInput, RequestExtras
 from api_regress.core.result import RequestResult
-from api_regress.report import common
+from api_regress.report import common, sidediff
 
 VALUE_LIMIT = 300
 DIFF_MAX_LINES = 1500
 DIFF_MAX_CHARS = 200_000
-DIFF_WRAP = 100
 
 
 @dataclass(frozen=True)
@@ -45,8 +43,7 @@ def body_diff(extras: RequestExtras | None) -> BodyDiff | None:
     note = f"body 过大，只对比前 {DIFF_MAX_LINES} 行 / {DIFF_MAX_CHARS} 个字符" if base_clipped or cand_clipped else None
     if base == cand:
         return BodyDiff(None, note or "两侧 body 文本相同")
-    table = difflib.HtmlDiff(wrapcolumn=DIFF_WRAP).make_table(base, cand, "基线", "候选", context=True, numlines=3)
-    return BodyDiff(Markup(table), note)  # HtmlDiff 已经转义了内容
+    return BodyDiff(sidediff.table(base, cand, "基线", "候选"), note)
 
 
 @dataclass(frozen=True)

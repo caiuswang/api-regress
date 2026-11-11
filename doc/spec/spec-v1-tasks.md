@@ -190,7 +190,7 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 **交付**
 - **`report/html.py`**：
   - 单文件 HTML，Jinja2 开启 autoescape。
-  - 用 `difflib.HtmlDiff` 生成并排 diff，body 过大时截断。
+  - 并排 diff（D23：自己渲染，不用 `difflib.HtmlDiff`），body 过大时截断。
   - curl 复现命令，header 值用 `<redacted>` 代替。
 - **`report/md.py`**：格式参照 spec §12.2 的样例。
 - **`report/junit.py`**：每条请求是一个 testcase；failure 和 error 的判定按 spec §9。
@@ -222,13 +222,13 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 
 **测试**：报告快照测试、XSS 用例、用标准解析器读取 junit.xml。
 
-**已知问题（2026-11-11 code review 发现，暂缓处理）**
+**已知问题（2026-11-11 code review 发现，均已处理）**
 
-review 发现的其他问题（报告与退出码不一致、复用目录留下旧 `result.json`、嵌套数字带引号、Markdown 隐藏 `unsupported`、Markdown 星号转义、`--format` 不能重复也不能关闭）已修复，见 D22。以下问题先记录：
+review 发现的其他问题（报告与退出码不一致、复用目录留下旧 `result.json`、嵌套数字带引号、Markdown 隐藏 `unsupported`、Markdown 星号转义、`--format` 不能重复也不能关闭）已修复，见 D22。以下问题当时暂缓，之后单独处理：
 
 | # | 问题 | 后果 | 处理方向 |
 |---|---|---|---|
-| K21 | HTML 的 body 对照用 `difflib.HtmlDiff.make_table`，大段内容都变了时耗时远超线性：实测 1500 行、几乎每行都不同的 JSON 要 6.9 s（500 行 0.1 s），而且是每条请求各算一次 | 大 body 的 suite 在所有请求跑完后长时间卡住；这时按 Ctrl+C 不会写 `result.json`（`result.json` 最后写，是有意的），整次运行的结果都拿不到 | 待定。**已否决**：降低截断阈值，或 body 超过某个大小就只给"过大"的提示（用户认为这样处理不对）。需要另找方案，先和用户确认 |
+| K21 | ~~HTML 的 body 对照用 `difflib.HtmlDiff.make_table`，大段内容都变了时耗时远超线性（1500 行都变了约 11 s，每条请求各算一次）~~ | 大 body 的 suite 在所有请求跑完后长时间卡住，期间 Ctrl+C 拿不到 `result.json` | **已修复（D23）**：自己渲染并排表格，行内高亮只在 replace 块里按顺序配对、超过 200 字符的行不做；同样输入约 0.02 s。截断阈值不变 |
 
 ---
 
