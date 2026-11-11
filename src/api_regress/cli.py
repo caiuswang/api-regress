@@ -141,7 +141,7 @@ def _log_file() -> Path | None:
 
 
 _SNAPSHOT = click.option(
-    "--snapshot", required=True, type=click.Path(file_okay=False, path_type=Path), help="快照目录"
+    "-d", "--dir", "snapshot", required=True, type=click.Path(file_okay=False, path_type=Path), help="快照目录"
 )
 _ONLY = click.option("--only", multiple=True, help="只处理指定的请求，可以重复")
 _OUT = click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="run 目录，默认 ./api-regress-out/<时间>/")
@@ -167,7 +167,12 @@ def run(suite: str, out: Path | None, fail_on: str, baseline_url: str | None, ca
     return _finish(service.run_sync(suite, options), _print_paired)
 
 
-@cli.command()
+@cli.group()
+def snapshot() -> None:
+    """快照：只有一个环境时，发版前录基线（record），发版后和快照对比（compare），差异是预期的就收进快照（accept）。"""
+
+
+@snapshot.command()
 @_SUITE
 @_SNAPSHOT
 @_OUT
@@ -206,7 +211,7 @@ def _print_record(report: service.RecordReport) -> None:
     click.echo(f"snapshot: {report.snapshot}")
 
 
-@cli.command()
+@snapshot.command()
 @_SUITE
 @_SNAPSHOT
 @click.option("--clean", is_flag=True, help="先清空快照再录：新快照只包含本次写入的请求")
@@ -227,7 +232,7 @@ def _print_accept(report: service.AcceptReport) -> None:
         click.echo(f"snapshot: {report.snapshot}")
 
 
-@cli.command()
+@snapshot.command()
 @click.argument("run_dir", type=click.Path(file_okay=False, path_type=Path))
 @_SNAPSHOT
 @_ONLY

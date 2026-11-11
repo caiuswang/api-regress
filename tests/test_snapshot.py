@@ -130,7 +130,7 @@ def test_query_change_inconclusive_then_accept_then_clean(tmp_path):
     report = compare(tmp_path, changed, Server().on("cand", "/x", j(OK)))
     r = only(report)
     assert r.status == "inconclusive" and r.snapshot_problem == "fingerprint_mismatch"
-    assert "指纹不一致" in r.reason and "record 或 accept" in r.reason
+    assert "指纹不一致" in r.reason and "snapshot record 或 snapshot accept" in r.reason
     assert report.exit_code == 4
     assert (tmp_path / "out" / "candidate" / "a.json").is_file()
     acc = accept(tmp_path)

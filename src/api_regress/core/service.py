@@ -162,7 +162,7 @@ def _suite_error(command: str, source: str, issues: list[ConfigIssue], report: t
 
 
 def _version_error(command: str, source: str, exc: Exception, report: type[CommandReport]) -> _Stop:
-    return _suite_error(command, source, [_usage_issue(source, "--snapshot", str(exc))], report)
+    return _suite_error(command, source, [_usage_issue(source, "--dir", str(exc))], report)
 
 
 def _internal_error(command: str, source: str, detail: str, report: type[CommandReport]) -> _Stop:

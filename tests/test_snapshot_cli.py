@@ -1,4 +1,4 @@
-"""record / compare / accept 命令端到端：真实的本地 HTTP 服务，检查 stdout、日志和哨兵 token。"""
+"""snapshot record / compare / accept 命令端到端：真实的本地 HTTP 服务，检查 stdout、日志和哨兵 token。"""
 
 from __future__ import annotations
 
@@ -60,21 +60,21 @@ def test_record_compare_accept_end_to_end(httpserver, tmp_path, monkeypatch, cap
     snap, out, log_file = tmp_path / "snap", tmp_path / "out", tmp_path / "all.log"
     logs = ["--log-level", "DEBUG", "--log-file", str(log_file)]
 
-    lines = _command(["record", str(suite), "--snapshot", str(snap), *logs], 0, capsys)
+    lines = _command(["snapshot", "record", str(suite), "-d", str(snap), *logs], 0, capsys)
     assert lines[0] == "recorded 2 | not recorded 0"
     assert lines[-2:] == [f"snapshot: {snap}", "exit 0: 全部通过"]
     assert not any("/cand" in req.url for req, _ in httpserver.log)
 
     monkeypatch.delenv("BASE_TOKEN")
     monkeypatch.setenv("CAND_TOKEN", SENTINEL)
-    lines = _command(["compare", str(suite), "--snapshot", str(snap), "--out", str(out), *logs], 1, capsys)
+    lines = _command(["snapshot", "compare", str(suite), "-d", str(snap), "--out", str(out), *logs], 1, capsys)
     assert lines[1] == "findings: breaking 1 | suspicious 0 | info 1"
     assert lines[-1] == "exit 1: 存在 1 条达到 breaking 级别的 finding"
     assert json.loads((out / "result.json").read_text())["command"] == "compare"
 
-    lines = _command(["accept", str(out), "--snapshot", str(snap), "--only", "detail", *logs], 0, capsys)
+    lines = _command(["snapshot", "accept", str(out), "-d", str(snap), "--only", "detail", *logs], 0, capsys)
     assert lines == ["accepted 1 | rejected 0", f"snapshot: {snap}", "exit 0: 全部通过"]
-    _command(["compare", str(suite), "--snapshot", str(snap), "--out", str(out), *logs], 0, capsys)
+    _command(["snapshot", "compare", str(suite), "--dir", str(snap), "--out", str(out), *logs], 0, capsys)
 
     log_text = log_file.read_text()
     assert SENTINEL not in log_text + _files_text(snap, out)
@@ -90,7 +90,7 @@ def test_record_prints_not_written_and_suggestions(httpserver, tmp_path, monkeyp
     )
     httpserver.expect_request("/base/health", method="HEAD").respond_with_data("", status=503)
     suite = _suite(tmp_path, httpserver.url_for("/base"), "http://127.0.0.1:1", REQUESTS)
-    assert main(["record", str(suite), "--snapshot", str(tmp_path / "snap")]) == 4
+    assert main(["snapshot", "record", str(suite), "--dir", str(tmp_path / "snap")]) == 4
     out = capsys.readouterr().out
     assert "recorded 1 | not recorded 1" in out
     assert "  health: inconclusive（基线返回 503，基线不可用）" in out
@@ -101,11 +101,21 @@ def test_record_prints_not_written_and_suggestions(httpserver, tmp_path, monkeyp
 def test_accept_prints_rejected(tmp_path, capsys):
     out = tmp_path / "out"
     out.mkdir()
-    assert main(["accept", str(out), "--snapshot", str(tmp_path / "snap")]) == 3
+    assert main(["snapshot", "accept", str(out), "--dir", str(tmp_path / "snap")]) == 3
     assert "不是 api-regress 的 run 目录" in capsys.readouterr().out
 
 
 def test_snapshot_option_required(tmp_path, capsys):
-    assert main(["record", str(tmp_path / "s.yaml")]) == 2
-    assert main(["compare", str(tmp_path / "s.yaml")]) == 2
-    assert main(["accept", str(tmp_path)]) == 2
+    assert main(["snapshot", "record", str(tmp_path / "s.yaml")]) == 2
+    assert main(["snapshot", "compare", str(tmp_path / "s.yaml")]) == 2
+    assert main(["snapshot", "accept", str(tmp_path)]) == 2
+
+
+def test_snapshot_commands_only_under_group(capsys):
+    """快照相关命令只在 snapshot 命令组下，顶层没有 record / compare / accept。"""
+    for name in ("record", "compare", "accept"):
+        assert main([name, "--help"]) == 2
+    capsys.readouterr()
+    assert main(["snapshot", "--help"]) == 0
+    out = capsys.readouterr().out
+    assert all(name in out for name in ("record", "compare", "accept"))

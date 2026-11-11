@@ -11,15 +11,15 @@
 
 差异分为 **breaking / suspicious / info** 三级，结果输出成报告，同时给出 CI 可直接使用的退出码。
 
-> 项目还在开发中：目前可用的是 `validate`、`run`、`record`、`compare`、`accept`（输出 `result.json`、两侧响应和快照）和本地演示服务 `demo`；HTML / Markdown / JUnit 报告尚未实现。
+> 项目还在开发中：目前可用的是 `validate`、`run`、`snapshot record` / `compare` / `accept`（输出 `result.json`、两侧响应和快照）和本地演示服务 `demo`；HTML / Markdown / JUnit 报告尚未实现。
 
 ## 适用场景
 
 | 场景 | 做法 |
 |---|---|
 | 预发和生产同时在线，发版前对比 | `run`：两边都实时请求 |
-| 只有一个环境：发版前录基线，发版后对比 | `record` → 发版 → `compare` |
-| 差异是预期内的变更，需要更新基线 | `accept` |
+| 只有一个环境：发版前录基线，发版后对比 | `snapshot record` → 发版 → `snapshot compare` |
+| 差异是预期内的变更，需要更新基线 | `snapshot accept` |
 | 接入 CI，出现 breaking 就阻断 | `--fail-on breaking`，配合 JUnit 报告 |
 
 ## 功能
@@ -94,12 +94,12 @@ api-regress run suite.yaml --fail-on breaking # 两边实时请求并对比
 api-regress demo                              # 启动本地演示服务
 
 # 只有一个环境时：
-api-regress record  suite.yaml --snapshot snap/   # 发版前
-api-regress compare suite.yaml --snapshot snap/   # 发版后
-api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-detail
+api-regress snapshot record  suite.yaml -d snap/   # 发版前
+api-regress snapshot compare suite.yaml -d snap/   # 发版后
+api-regress snapshot accept  api-regress-out/<时间戳> -d snap/ --only order-detail
 ```
 
-结果输出到 `api-regress-out/<时间戳>/` 目录（`result.json`、两侧的响应），stdout 打印摘要，见 [doc/user/run.md](doc/user/run.md)。快照的录制、对比和更新见 [doc/user/snapshot.md](doc/user/snapshot.md)：`record` 只需要基线的环境变量，`compare` 只需要候选的；快照缺失或指纹不一致的请求是 `inconclusive`，`accept` 后即可正常对比。
+结果输出到 `api-regress-out/<时间戳>/` 目录（`result.json`、两侧的响应），stdout 打印摘要，见 [doc/user/run.md](doc/user/run.md)。快照的录制、对比和更新见 [doc/user/snapshot.md](doc/user/snapshot.md)：`snapshot record` 只需要基线的环境变量，`snapshot compare` 只需要候选的；快照缺失或指纹不一致的请求是 `inconclusive`，`snapshot accept` 后即可正常对比。
 
 **退出码**
 
@@ -109,7 +109,7 @@ api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-de
 | 1 | 有达到 `--fail-on` 级别的差异 |
 | 2 | 配置错误（含命令行参数写错、快照版本不兼容） |
 | 3 | 工具自身错误（含快照损坏、无法写入快照或 run 目录） |
-| 4 | 部分请求无法得出结论，比如网络错误、token 失效、基线不可用、快照里没有；record / accept 有请求没写入快照 |
+| 4 | 部分请求无法得出结论，比如网络错误、token 失效、基线不可用、快照里没有；`snapshot record` / `accept` 有请求没写入快照 |
 
 ## 文档
 
@@ -118,7 +118,7 @@ api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-de
 | [doc/user/suite.md](doc/user/suite.md) | suite 配置格式：完整示例、字段、路径写法、规则怎么合并 |
 | [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、warning、环境变量、YAML 常见坑 |
 | [doc/user/run.md](doc/user/run.md) | `run` 命令：请求怎么发、每条请求的流程与状态、非 body 的差异、不稳定字段建议、stdout、退出码、run 目录与 `result.json` |
-| [doc/user/snapshot.md](doc/user/snapshot.md) | `record` / `compare` / `accept`：快照怎么录、怎么对比、accept 接受和拒绝的规则、请求指纹、快照目录格式与原子写入、退出码 |
+| [doc/user/snapshot.md](doc/user/snapshot.md) | `snapshot record` / `compare` / `accept`：快照怎么录、怎么对比、accept 接受和拒绝的规则、请求指纹、快照目录格式与原子写入、退出码 |
 | [doc/user/compare.md](doc/user/compare.md) | 对比规则：差异类型与级别、规则属性、数组模式怎么选、已知限制 |
 | [doc/user/expressions.md](doc/user/expressions.md) | `success` 与 `asserts` 表达式的写法、内置函数、不支持的语法 |
 | [doc/user/demo.md](doc/user/demo.md) | `demo` 本地演示服务：接口、v2 改了什么、两个示例 suite |

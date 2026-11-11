@@ -172,6 +172,7 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 - **`record` 命令**：只用 baseline 环境；按请求合并写入；`--clean` 清空后重录；失败的请求保留旧 sample；在 stdout 输出不稳定字段建议。
 - **`compare` 命令**：只用 candidate 环境；指纹不一致或快照缺失的请求判为 inconclusive。
 - **`accept` 命令**：按请求合并写入；按 spec §8.3 的规则决定接受或拒绝；快照不存在时新建。
+- **命令分组**（spec D21，review 时追加）：三个命令收进 `snapshot` 命令组（`snapshot record` / `compare` / `accept`），快照目录参数改为 `-d` / `--dir`。
 
 **验收**：AC-03、AC-26 ~ AC-29，以及 spec §12.1 的 S2 走查（3a ~ 3e）。
 

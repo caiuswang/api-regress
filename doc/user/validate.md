@@ -45,7 +45,7 @@ INVALID, 2 error(s)
 
 | code | 含义 | 怎么处理 |
 |---|---|---|
-| `env_var_missing` | 某个 target（或两侧共用的部分）引用的环境变量没有设置 | 跑 `run` / `record` / `compare` 前设置好；只影响对应命令需要的那一侧 |
+| `env_var_missing` | 某个 target（或两侧共用的部分）引用的环境变量没有设置 | 跑 `run` / `snapshot record` / `snapshot compare` 前设置好；只影响对应命令需要的那一侧 |
 | `rule_under_ignored` | 规则写在一个已经被 `ignore: true` 的节点下面；或者规则所在的节点本身被更宽泛的 ignore 覆盖，而它自己没写 `ignore` | 删掉它；或者把父节点的 ignore 改得更精确；节点本身被覆盖时，在这条规则上加 `ignore: false` |
 | `index_rule_ineffective` | 规则用了字面下标（如 `items[0].x`），但该数组不是 positional 模式 | 改用 `items[*].x`，或者给数组配 `array: {mode: positional}` |
 | `rule_ineffective_in_schema` | `on_value_change` 写在 schema 或 unordered 模式数组的元素里，这两种模式不逐个配对元素，不比较元素字段的值；或者 schema 数组元素里的内层数组配了非 schema 的 `array` 规则，外层没有配对，内层也只能按 schema 比较 | 给外层数组配 `array: {keys: [...]}` 改用 keyed 模式 |

@@ -114,7 +114,7 @@ def _tmp_prefix(root: Path) -> str:
 def _normalize(root: Path) -> Path:
     root = root.resolve()
     if not root.name:
-        raise SnapshotError(f"--snapshot 不能是根目录：{root}")
+        raise SnapshotError(f"--dir 不能是根目录：{root}")
     return root
 
 
@@ -148,7 +148,7 @@ def readable(root: Path) -> Path:
     root = _normalize(root)
     old = _old(root)
     if not root.exists() and (old / MANIFEST).is_file():
-        log.warning("快照 %s 不存在，上次写入中断留下了 %s，本次读取它；下次 record / accept 时会恢复", root, old)
+        log.warning("快照 %s 不存在，上次写入中断留下了 %s，本次读取它；下次 snapshot record / accept 时会恢复", root, old)
         return old
     return root
 
@@ -171,7 +171,7 @@ def _read_manifest(root: Path) -> Manifest:
     version = data.get("schema_version") if isinstance(data, dict) else None
     if isinstance(version, int) and not isinstance(version, bool) and version != SCHEMA_VERSION:
         raise SnapshotVersionError(
-            f"快照 {root} 的 schema_version 是 {version}，当前工具只支持 {SCHEMA_VERSION}；用 --clean 重新 record"
+            f"快照 {root} 的 schema_version 是 {version}，当前工具只支持 {SCHEMA_VERSION}；用 snapshot record --clean 重录"
         )
     try:
         manifest = Manifest.model_validate(data)
@@ -204,10 +204,10 @@ def load(root: Path, names: Iterable[str]) -> Snapshot:
         log.warning("快照 %s 不存在，所有请求都按快照缺失处理", root)
         return Snapshot(root=root, exists=False)
     if not root.is_dir():
-        raise SnapshotError(f"--snapshot {root} 不是目录")
+        raise SnapshotError(f"--dir {root} 不是目录")
     if not (root / MANIFEST).is_file():
         if any(root.iterdir()):
-            raise SnapshotError(f"--snapshot {root} 不是快照目录（没有 {MANIFEST}）")
+            raise SnapshotError(f"--dir {root} 不是快照目录（没有 {MANIFEST}）")
         return Snapshot(root=root, exists=False)
     manifest = _read_manifest(root)
     entries = {name: _read_entry(root, name) for name in names if name in manifest.requests}
@@ -218,11 +218,11 @@ def load(root: Path, names: Iterable[str]) -> Snapshot:
 def check_writable(root: Path, clean: bool) -> Manifest | None:
     """发请求之前检查能不能写。返回现有的 manifest（不存在或 --clean 时为 None）。
 
-    已存在的非空目录必须含 manifest.json，免得 `--snapshot .` 把无关文件换掉。--clean 不读 manifest 的内容，
+    已存在的非空目录必须含 manifest.json，免得 `--dir .` 把无关文件换掉。--clean 不读 manifest 的内容，
     所以损坏或版本不兼容的快照可以用 --clean 重录。请求文件只检查是否存在：没变的文件按字节原样复制，
     不需要解析（大快照上 `record --only x` 不必把每个 body 都解一遍）；内容坏了由 compare 读取时报。"""
     if root.exists() and not _is_snapshot_dir(root):
-        raise SnapshotError(f"--snapshot {root} 已存在，但不是快照目录（没有 {MANIFEST}），拒绝写入")
+        raise SnapshotError(f"--dir {root} 已存在，但不是快照目录（没有 {MANIFEST}），拒绝写入")
     if clean or not (root / MANIFEST).is_file():
         return None
     manifest = _read_manifest(root)

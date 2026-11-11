@@ -80,7 +80,7 @@ flowchart LR
 | `core/accept.py` | accept 的判定：有序规则表 `ACCEPT_RULES` | `rejection` |
 | `core/executor.py` | 并发执行每条请求：并发名额、取消、进度事件、单条请求的意外异常；run / compare / record 三种模式 | `Executor`、`Executed`、`Targets`、`RequestStarted`、`RequestDone`、`CancelToken` |
 | `core/service.py` | 对外编排入口，提供 async 和同步两种调用；命令的前置检查和退出码；本次未命中的规则 | `validate_suite(_sync)`、`run(_sync)`、`compare(_sync)`、`record(_sync)`、`accept(_sync)`、`RunOptions`、`CompareOptions`、`RecordOptions`、`AcceptOptions`、`RunReport`、`RecordReport`、`AcceptReport`、`CommandReport` |
-| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令）、日志初始化 | `main`、`cli`、`validate`、`run`、`compare`、`record`、`accept`、`demo`、`setup_logging` |
+| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令，快照命令在 `snapshot` 子命令组下）、日志初始化 | `main`、`cli`、`validate`、`run`、`snapshot`、`compare`、`record`、`accept`、`demo`、`setup_logging` |
 | `demo/server.py` | 本地演示服务：标准库 `ThreadingHTTPServer`；`/v1`、`/v2` 前缀选数据集，有序路由表 `ROUTES`；Decimal 原样输出；不开 `SO_REUSEADDR`，端口被占用时直接报错 | `make_server`、`base_url`、`dispatch`、`dumps`、`DemoServer`、`DEFAULT_PORT` |
 | `demo/data.py` | 演示数据：v1 固定数据，v2 的每处改动写在 `_v2_*` 函数里 | `DATASETS` |
 | `demo/__init__.py`、`demo/suites/` | 自带的 `pass.yaml`、`regress.yaml`（作为包数据随 wheel 发布）及写出方法 | `suite_text`、`write_suites`、`SUITE_NAMES` |
@@ -288,7 +288,7 @@ flowchart TD
 
 `EXIT_RULES` 是按 2 > 3 > 1 > 4 > 0 排列的 `(码, 谓词, 原因)` 表，`exit_code(ExitState)` 取第一个满足的。`run_exit_state` 统计达到 `--fail-on`（`FAIL_ON_LEVELS`）的 finding 数和 `error` / `inconclusive` 的请求数。suite 错误（2）在加载阶段直接返回；单条请求的意外异常、进度回调出错通过 `ExitState.internal_error` 参与计算。写 run 目录失败（3）发生在写入阶段：`RunReport` 和其中的 `result` 都改成 3 和新原因，`out_dir` 为 `None`（CLI 显示 `result: 未写入`）；磁盘上如果已经写出了 `result.json`，里面是写入前算出的码。
 
-## record / compare / accept
+## snapshot record / compare / accept
 
 三个命令共用 `service` 里的前置检查（`_load` 按命令需要的 target 加载 suite、`_check_usage` 检查 `--only` 和覆盖地址、`_open_snapshot` / `_compare_snapshot` 处理快照），任何一步不通过都用 `_Stop` 带着算好的返回值提前结束，**不发请求**。退出码都走 `result.exit_code`：record / accept 的「没写入」用 `ExitState.incomplete` 加 `incomplete_text`。
 
@@ -318,11 +318,11 @@ flowchart TD
 
 - **格式**：`manifest.json`（`Manifest`：`schema_version`、`tool_version`、`fingerprint_version`、`updated_at`、`requests: {name: ManifestEntry}`，`ManifestEntry` 是 `fingerprint`、`recorded_at`、`source`、`samples`）和 `requests/<name>.json`（`samples.side_document`，和 run 目录的两侧文件相同）。manifest 是索引；指纹以请求文件里的为准。
 - **读**（`load`）：目录不存在、或是空目录，当作空快照；有内容但没有 `manifest.json` 抛 `SnapshotError`。`_read_manifest` 先单独看 `schema_version`：是整数但不是当前版本时抛 `SnapshotVersionError`（退出码 2），再用 pydantic 校验（失败算损坏，退出码 3），请求名也要符合 `config.NAME_PATTERN`。只读本次要用的请求文件，`_read_entry` 用 `parse_side_document` 解析，格式错误、`name` 不对、没有 sample 都算损坏。`samples.from_record` 对任何坏数据都抛 `SampleFormatError`（不会漏出 `TypeError` / `ValueError`）。
-- **写前检查**（`check_writable`）：已存在的非空目录必须含 `manifest.json`（`_is_snapshot_dir`）；不是 `--clean` 时读 manifest，并检查它列出的请求文件都存在；不解析这些文件，`_fill` 按字节原样复制没变的那些（大快照上 `record --only x` 不必把每个 body 都解一遍），内容坏了由 compare 的 `load` 报。返回现有的 `Manifest` 作为合并的底。
+- **写前检查**（`check_writable`）：已存在的非空目录必须含 `manifest.json`（`_is_snapshot_dir`）；不是 `--clean` 时读 manifest，并检查它列出的请求文件都存在；不解析这些文件，`_fill` 按字节原样复制没变的那些（大快照上 `snapshot record --only x` 不必把每个 body 都解一遍），内容坏了由 compare 的 `load` 报。返回现有的 `Manifest` 作为合并的底。
 - **异常 → 退出码**：`service._snapshot_step` 统一把快照操作的 `SnapshotVersionError` 换成退出码 2、其他 `OSError`（含 `SnapshotError`）换成 3；`_open_snapshot`（record / accept）、`_compare_snapshot`、`_save` 都经过它。
 - **JSON 格式**：run 目录和快照的文件都用 `samples.dump_json` 写（UTF-8、不转义非 ASCII、缩进 2、末尾换行），两边格式不会分叉。
 - **写**（`write`）：`_merged_manifest` 合并索引（本次的条目覆盖同名的旧条目，按 name 排序）；`_fill` 在 `tempfile.mkdtemp(prefix=".<name>.tmp-", dir=父目录)` 里复制没变的请求文件（`shutil.copy2`，不重新序列化）、写入新的请求文件和 manifest；`_swap` 做 `snap → snap.old`、`tmp → snap`、删 `snap.old`；最后一步失败时新快照已经就位，只记 WARNING，留给下次 `recover` 删。不能直接 `os.replace` 到已存在的非空目录（`ENOTEMPTY`），所以要先把旧目录挪开。任何 `OSError` 都删掉临时目录、转成 `SnapshotError`，旧快照不受影响。
-- **残留**（`recover`，record / accept 开始时调用）：路径先 `resolve()`（这样 `--snapshot .` 也有名字）。`snap.old` 存在时：没有 `manifest.json` 说明不是我们留下的，报错；`snap` 不存在说明中断在两次 rename 之间，把 `.old` 恢复回来；否则删掉 `.old`。最后删掉同级的 `.<name>.tmp-*`。不支持多个进程同时写同一个快照。
+- **残留**（`recover`，record / accept 开始时调用）：路径先 `resolve()`（这样 `--dir .` 也有名字）。`snap.old` 存在时：没有 `manifest.json` 说明不是我们留下的，报错；`snap` 不存在说明中断在两次 rename 之间，把 `.old` 恢复回来；否则删掉 `.old`。最后删掉同级的 `.<name>.tmp-*`。不支持多个进程同时写同一个快照。
 - **compare 只读**（`readable`）：不调用 `recover`，不删除、不改名任何东西，免得删掉另一个进程正在写的临时目录，或在只读挂载上失败。`snap` 不存在而 `snap.old` 含 `manifest.json` 时（中断在两次 rename 之间）返回 `snap.old` 来读，记 WARNING。
 - **record 一条都没写入时不写快照**，`--clean` 也一样（`service._record` 记 WARNING）：否则基线不可用、token 过期时 `--clean` 会把好的快照换成空的。
 
@@ -340,7 +340,7 @@ flowchart TD
 
 ## CLI 约定
 
-- 子命令挂在 `cli` 命令组下：`validate`、`run`、`compare`、`record`、`accept`、`demo`。几个命令共用的参数（`--snapshot`、`--only`、`--out`、`--fail-on`、suite 参数）定义成模块级的装饰器常量；`_finish` 统一打印错误或摘要，最后一行总是 `exit N: 原因`。通用参数（`--log-level`、`--log-file`）由装饰器 `common_options` 统一添加；它也负责初始化日志（日志文件打不开返回 3），并把未捕获的异常记为内部错误（退出码 3）。Click 自己的异常（`UsageError`、`Exit`、`Abort`）原样抛出，交给 `main`。
+- 子命令挂在 `cli` 命令组下：`validate`、`run`、`snapshot`、`demo`；`snapshot` 本身是命令组，下面挂 `record`、`compare`、`accept`，这样顶层只有实时对比的 `run`，和快照有关的都在一处。几个命令共用的参数（`-d` / `--dir`，参数名仍是 `snapshot`；`--only`、`--out`、`--fail-on`、suite 参数）定义成模块级的装饰器常量；`_finish` 统一打印错误或摘要，最后一行总是 `exit N: 原因`。通用参数（`--log-level`、`--log-file`）由装饰器 `common_options` 统一添加；它也负责初始化日志（日志文件打不开返回 3），并把未捕获的异常记为内部错误（退出码 3）。Click 自己的异常（`UsageError`、`Exit`、`Abort`）原样抛出，交给 `main`。
 - 子命令返回 int 作为退出码。`main` 用 `standalone_mode=False` 调用 Click：子命令返回值和 `ctx.exit(code)` 都会作为返回值传出来；`ClickException`（含参数错误）返回 2，`Abort` 返回 3。
 - 错误和 warning 的位置前缀统一由 `config.format_where` 生成：`suite.yaml:12: requests[0].method:`。
 

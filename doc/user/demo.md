@@ -77,13 +77,13 @@ DEMO_URL=http://127.0.0.1:9000 api-regress run demo/regress.yaml
 
 ### 试快照流程
 
-`regress.yaml` 也能演示"只有一个环境"的流程（见 [snapshot.md](snapshot.md)）：`record` 只请求基线（`/v1`），`compare` 只请求候选（`/v2`）。
+`regress.yaml` 也能演示"只有一个环境"的流程（见 [snapshot.md](snapshot.md)）：`snapshot record` 只请求基线（`/v1`），`snapshot compare` 只请求候选（`/v2`）。
 
 ```bash
-api-regress record  demo/regress.yaml --snapshot snap/                  # 7 条都写入，退出码 0
-api-regress compare demo/regress.yaml --snapshot snap/ --out out/       # 和 run 一样报出上表的 finding，退出码 1
-api-regress accept  out/ --snapshot snap/                               # inventory（business_error）、daily-report（500）被拒，退出码 4
-api-regress compare demo/regress.yaml --snapshot snap/ --out out/       # 只剩这两条的 finding
+api-regress snapshot record  demo/regress.yaml -d snap/                  # 7 条都写入，退出码 0
+api-regress snapshot compare demo/regress.yaml -d snap/ --out out/       # 和 run 一样报出上表的 finding，退出码 1
+api-regress snapshot accept  out/ -d snap/                               # inventory（business_error）、daily-report（500）被拒，退出码 4
+api-regress snapshot compare demo/regress.yaml -d snap/ --out out/       # 只剩这两条的 finding
 ```
 
 ## 常见问题

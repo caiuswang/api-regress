@@ -71,7 +71,7 @@ def _auth_hint(f: Facts) -> str:
 
 def _snapshot_hint(f: Facts) -> str:
     assert f.snapshot_problem is not None
-    return f"{SNAPSHOT_PROBLEM_TEXT[f.snapshot_problem]}，请 record 或 accept"
+    return f"{SNAPSHOT_PROBLEM_TEXT[f.snapshot_problem]}，请 snapshot record 或 snapshot accept"
 
 
 Rule = tuple[Callable[[Facts], bool], RequestStatus, Callable[[Facts], str | None]]

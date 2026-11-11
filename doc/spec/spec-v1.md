@@ -21,9 +21,9 @@ api-regress 是一个 CLI 小工具，主要给 QA 做回归，开发也能用�
 | # | 场景 | 用法 |
 |---|---|---|
 | S1 | 预发和生产同时在线，发版前对比 | `run`：两边都实时请求 |
-| S2 | 只有一个环境：发版前录基线，发版后对比 | `record` → 发版 → `compare` |
-| S3 | 差异是预期的变更，需要更新基线 | `accept` |
-| S4 | 接入 CI，遇到 breaking 时阻断流水线 | `run` / `compare` + `--fail-on` + JUnit |
+| S2 | 只有一个环境：发版前录基线，发版后对比 | `snapshot record` → 发版 → `snapshot compare` |
+| S3 | 差异是预期的变更，需要更新基线 | `snapshot accept` |
+| S4 | 接入 CI，遇到 breaking 时阻断流水线 | `run` / `snapshot compare` + `--fail-on` + JUnit |
 
 ### 1.2 目标用户
 - **QA**：维护请求清单（suite），看报告。日常使用不需要写代码。
@@ -32,7 +32,7 @@ api-regress 是一个 CLI 小工具，主要给 QA 做回归，开发也能用�
 ## 2. 范围
 
 ### 2.1 v1 包含
-1. CLI 命令：`validate`、`run`、`record`、`compare`、`accept`
+1. CLI 命令：`validate`、`run`、`snapshot`（子命令 `record`、`compare`、`accept`）、`demo`
 2. 只发 **GET / HEAD** 请求，只比较 **JSON** 响应
 3. YAML 格式的 suite，用 `${VAR}` 注入环境变量
 4. 默认只比较**结构**：字段增删、类型、状态码；配了 `decimal` 的字段还比较小数位
@@ -76,11 +76,13 @@ api-regress 是一个 CLI 小工具，主要给 QA 做回归，开发也能用�
 ```
 api-regress validate <suite.yaml>
 api-regress run      <suite.yaml> [--out DIR] [--fail-on LEVEL] [--baseline-url URL] [--candidate-url URL]
-api-regress record   <suite.yaml> --snapshot DIR [--clean] [--baseline-url URL]
-api-regress compare  <suite.yaml> --snapshot DIR [--out DIR] [--fail-on LEVEL] [--candidate-url URL]
-api-regress accept   <run-dir> --snapshot DIR
+api-regress snapshot record  <suite.yaml> -d DIR [--clean] [--baseline-url URL]
+api-regress snapshot compare <suite.yaml> -d DIR [--out DIR] [--fail-on LEVEL] [--candidate-url URL]
+api-regress snapshot accept  <run-dir>    -d DIR
 api-regress demo     [--host HOST] [--port PORT] [--write-suites DIR]
 ```
+
+**命令分组**（D21）：顶层只放两侧都实时请求的 `run`，以及 `validate`、`demo`；和快照有关的三个命令收在 `snapshot` 命令组下。快照目录用 `-d` / `--dir` 指定（必填）。下文和其他文档里单独写 `record` / `compare` / `accept` 时，指的就是 `snapshot record` / `snapshot compare` / `snapshot accept`。
 
 **通用参数**
 - `--only NAME`：可以重复，只处理指定的请求。
@@ -98,9 +100,9 @@ api-regress demo     [--host HOST] [--port PORT] [--write-suites DIR]
 |---|---|---|---|---|
 | `validate` | 无（只做静态检查） | 校验 suite 的语法和字段、路径、表达式白名单。缺少环境变量**按 target 分别列出，只给 warning**（code `env_var_missing`）；静态可判定的无效规则也给 warning（§6.1、§6.3、§7.6） | `OK, N requests` + warning 列表 | 0 / 2 |
 | `run` | 两侧 | 基线串行请求 2 次，候选请求 1 次，然后对比 | 各级别 finding 数、各请求状态数、报告路径 | 0 / 1 / 2 / 3 / 4 |
-| `record` | 只需要 baseline | 每条请求串行请求 2 次，**按请求合并**写入快照。失败的请求保留旧 sample；`--clean` 会先清空快照 | 写入数、未写入的请求及原因、**不稳定字段建议** | 0 / 2 / 3 / 4 |
-| `compare` | 只需要 candidate | 基线读快照，候选请求 1 次，然后对比 | 同 `run` | 0 / 1 / 2 / 3 / 4 |
-| `accept` | 无 | 把 run 目录里的候选响应**按请求合并**进快照，见 §8.3 | 接受数、被拒的请求及原因 | 0 / 2 / 3 / 4 |
+| `snapshot record` | 只需要 baseline | 每条请求串行请求 2 次，**按请求合并**写入快照。失败的请求保留旧 sample；`--clean` 会先清空快照 | 写入数、未写入的请求及原因、**不稳定字段建议** | 0 / 2 / 3 / 4 |
+| `snapshot compare` | 只需要 candidate | 基线读快照，候选请求 1 次，然后对比 | 同 `run` | 0 / 1 / 2 / 3 / 4 |
+| `snapshot accept` | 无 | 把 run 目录里的候选响应**按请求合并**进快照，见 §8.3 | 接受数、被拒的请求及原因 | 0 / 2 / 3 / 4 |
 | `demo` | 无 | 启动本地演示服务，或用 `--write-suites` 写出示例 suite，见 §4.2 | 服务地址；写出的文件 | 0 / 2 / 3 |
 
 **退出码定义**
@@ -462,7 +464,7 @@ snapshot/
 - `manifest.json`：`schema_version`（当前 1）、`tool_version`、`fingerprint_version`、`updated_at`，以及 `requests`：每条请求的 `fingerprint`、`recorded_at`、`source`（`record` / `accept`）、sample 数。
 - `requests/<name>.json`：和 run 目录的 `baseline/<name>.json` 格式相同（§9）。record 写 1–2 个 sample：基线第 2 次请求失败、不是 JSON 或不满足 `success` 时只写第 1 个（同时给 `second_sample_unavailable`）；accept 写 1 个。
 - **版本**：`schema_version` 不是当前版本时按"快照 manifest 版本不兼容"处理（退出码 2）；`fingerprint_version` 不同时，所有请求都按指纹不一致处理。manifest 解析不了、manifest 列出的请求文件缺失，算快照损坏（退出码 3）。compare 读到解析不了的请求文件也算损坏；record / accept 只检查 manifest 和请求文件是否存在，没变的请求文件按字节原样复制，不解析（大快照上 `--only` 不必解析全部 body）。
-- **快照目录的保护**：`--snapshot` 指向已存在的非空目录时，必须是快照（含 `manifest.json`），否则拒绝写入（退出码 3），在发请求之前检查。`--clean` 只要求含 `manifest.json`，不读它的内容，所以损坏或版本不兼容的快照可以用 `--clean` 重录。
+- **快照目录的保护**：`--dir` 指向已存在的非空目录时，必须是快照（含 `manifest.json`），否则拒绝写入（退出码 3），在发请求之前检查。`--clean` 只要求含 `manifest.json`，不读它的内容，所以损坏或版本不兼容的快照可以用 `--clean` 重录。
 - **原子替换**：先在同级目录写好完整的新快照（`.<name>.tmp-*`），再 `snap → snap.old`、新目录 → `snap`，最后删除 `snap.old`（新快照已就位后删除失败只给 WARNING 日志，不算写入失败）。record / accept 开始时处理上次中断的残留：`snap` 不存在而 `snap.old` 存在时恢复它，`snap` 存在时删除 `snap.old`；删除 `.<name>.tmp-*`。**compare 只读**：不删除、不改名任何东西；`snap` 不存在而 `snap.old` 存在时直接读 `snap.old`（给 WARNING），留给下次 record / accept 恢复。不支持多个命令同时写同一个快照。
 
 **各命令怎么用快照**（D20）
@@ -472,7 +474,7 @@ snapshot/
 ### 8.2 请求指纹
 - **计算依据**：method、path 和 query 的**模板**（`${VAR}` 替换前）、请求头的**名称**。
 - **不参与计算**：target 级的 headers 和 base_url 都不算，所以 S1、S2 可以共用同一份 suite。
-- **不一致时**：请求状态为 `inconclusive`，处理方法是 `record --only NAME` 或者 `accept`。
+- **不一致时**：请求状态为 `inconclusive`，处理方法是 `snapshot record --only NAME` 或者 `snapshot accept`。
 
 ### 8.3 accept
 - **来源与写入方式**：读取 run 目录里候选的响应和指纹，按请求合并进快照，可以用 `--only` 限定范围。快照不存在时会新建。
@@ -570,12 +572,12 @@ snapshot/
 | 步骤 | 命令 | 预期结果 |
 |---|---|---|
 | 1 | `api-regress validate suite.yaml` | `OK, 3 requests`，退出码 0 |
-| 2 | 发版前执行 `BASE_TOKEN=… api-regress record suite.yaml --snapshot snap/` | 3 条写入；stdout 列出建议，例如 `data.server_time` 建议 ignore；退出码 0 |
-| 3a | 发版后执行 `compare`；场景：`coupon_amount` 改名为 `discount_amount` | 产生 `field_removed`（breaking）和 `field_added`（info）；退出码 1 |
+| 2 | 发版前执行 `BASE_TOKEN=… api-regress snapshot record suite.yaml -d snap/` | 3 条写入；stdout 列出建议，例如 `data.server_time` 建议 ignore；退出码 0 |
+| 3a | 发版后执行 `snapshot compare`；场景：`coupon_amount` 改名为 `discount_amount` | 产生 `field_removed`（breaking）和 `field_added`（info）；退出码 1 |
 | 3b | 场景：列表里的 price 从 `12.50` 变成 `12.5` | `order-list` 产生 `scale_changed`（breaking），路径为 `data.list[*].price`，附示例下标；退出码 1 |
 | 3c | 场景：候选的 token 过期，返回 401 | 3 条请求都是 `inconclusive`，提示检查候选 token；退出码 4 |
 | 3d | 场景：列表顺序发生变化 | schema 模式下没有 finding；退出码 0 |
-| 3e | 场景：有意修改了 `order-detail` 的返回 | 执行 `accept out/<ts> --snapshot snap/ --only order-detail`；之后再 `compare`，退出码 0 |
+| 3e | 场景：有意修改了 `order-detail` 的返回 | 执行 `snapshot accept out/<ts> -d snap/ --only order-detail`；之后再 `snapshot compare`，退出码 0 |
 
 ### 12.2 报告样例（Markdown 节选）
 
@@ -704,3 +706,4 @@ snapshot/
 | D18 | `run` 的安全与健壮性（T4 code review 后补充）：`base_url` 不能带 userinfo；`timeout` 是单次请求的总时限；网络错误原因不带请求头的值；`--out` 先检查、只复用 api-regress 写的 run 目录、日志文件不算无关文件、写入失败时退出码和原因一致；取消对排队中的请求生效；单条请求的意外异常不中断运行、退出码 3（§7.2、§9） | 已确认（2026-11-11） |
 | D19 | 内置 `demo` 演示服务，方便不联网试用（用户提出，2026-11-11）。和非目标里的 Mock 的区别：数据固定、不可配置，只用于演示和自测（§2.3、§4.2） | 已确认（2026-11-11） |
 | D20 | 实现 T5 时补齐的快照细节：manifest 字段与版本处理、快照目录的保护与 `--clean`、原子替换的残留恢复；record 只对基线按 §7.2 判定，`unsupported` 也写入，第 2 个 sample 不可用时只写 1 个，一条都没写入时（含 `--clean`）不改动快照；compare 只读，不清理残留；compare 在快照缺失时仍请求候选并写 run 目录；accept 按 record 的标准检查候选（候选 5xx 也拒绝），判定信息来自 `result.json` 新增的 `snapshot_problem`、`candidate_success`；accept 的 `--only` 未知 name 退出码 2（§4.1、§8） | 待确认（2026-11-11） |
+| D21 | 快照相关命令收进 `snapshot` 命令组（用户提出，2026-11-11）：`record` / `compare` / `accept` 和 `run` 并列在顶层，用户分不清哪个是实时对比、哪个和快照有关。改为 `snapshot record` / `snapshot compare` / `snapshot accept`，快照目录参数从 `--snapshot` 改为 `-d` / `--dir`；不保留旧的顶层命令（v1 未发布）。`result.json` 的 `command` 仍是 `run` / `compare`，manifest 的 `source` 仍是 `record` / `accept`（§4） | 已确认（2026-11-11） |
