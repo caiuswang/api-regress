@@ -354,7 +354,7 @@ def _report_input(suite: Suite, out: Path, executed: list[Executed], result: Run
         item.plan.name: reportdata.extras_for(suite, item.plan.request, item.base_samples, item.cand)
         for item in executed
     }
-    return reportdata.ReportInput(result=result, out_dir=out, extras=extras)
+    return reportdata.ReportInput(result=result, out_dir=out, extras=extras, compare=suite.defaults.compare)
 
 
 def _log_summary(result: RunResult) -> None:

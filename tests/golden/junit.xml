@@ -1,15 +1,17 @@
 <?xml version='1.0' encoding='utf-8'?>
 <testsuites name="api-regress">
-  <testsuite name="api-regress run: suite.yaml" tests="7" failures="3" errors="2" skipped="1" time="2.000" timestamp="2026-11-11T10:15:00+08:00">
+  <testsuite name="api-regress run: suite.yaml" tests="8" failures="4" errors="2" skipped="1" time="2.000" timestamp="2026-11-11T10:15:00+08:00">
     <testcase name="order-detail" classname="suite" time="0.012">
-      <failure message="1 条达到 breaking 级别的 finding" type="finding">[breaking] field_removed data.coupon_amount："5.00" → (缺失)</failure>
-      <system-out>[info] field_added data.discount_amount：(缺失) → "5.00"</system-out>
+      <failure message="2 条达到 breaking 级别的 finding" type="finding">[breaking] field_removed data.coupon_amount："5.00" → (缺失)
+[breaking] assert_failed $assert[1] [asserts[1] exists(cand.body, "data.coupon_amount")]</failure>
+      <system-out>[suspicious] assert_failed $assert[0]（总额过低） [asserts[0] cand.body.data.total &gt; 100]
+[info] field_added data.discount_amount：(缺失) → "5.00"</system-out>
     </testcase>
     <testcase name="order-list" classname="suite" time="0.012">
-      <failure message="1 条达到 breaking 级别的 finding" type="finding">[breaking] scale_changed data.list[*].price（示例下标 0）：小数位 {2} → 小数位 {1, 2}</failure>
+      <failure message="1 条达到 breaking 级别的 finding" type="finding">[breaking] scale_changed data.list[*].price（示例下标 0）：小数位 {2} → 小数位 {1, 2} [defaults.rules[0] **.price（decimal: {}）]</failure>
     </testcase>
     <testcase name="xss" classname="suite" time="0.012">
-      <failure message="1 条达到 breaking 级别的 finding" type="finding">[breaking] value_changed data.note："plain" → "&lt;script&gt;alert(1)&lt;/script&gt;"</failure>
+      <failure message="1 条达到 breaking 级别的 finding" type="finding">[breaking] value_changed data.note："plain" → "&lt;script&gt;alert(1)&lt;/script&gt;" [rules[0] data.note（on_value_change: breaking）]</failure>
     </testcase>
     <testcase name="expired" classname="suite" time="0.012">
       <error message="inconclusive：候选返回 401，检查候选的 token 或限流" />
@@ -21,5 +23,8 @@
       <skipped message="unsupported：两侧都不是 JSON，只比较状态码" />
     </testcase>
     <testcase name="health" classname="suite" time="0.012" />
+    <testcase name="biz" classname="suite" time="0.012">
+      <failure message="1 条达到 breaking 级别的 finding" type="finding">[breaking] business_error $success：true → false（基线满足 success，候选不满足） [defaults.success body.code == 0]</failure>
+    </testcase>
   </testsuite>
 </testsuites>

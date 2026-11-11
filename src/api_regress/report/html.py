@@ -74,7 +74,7 @@ def _rows(req: RequestResult, extras: RequestExtras | None) -> list[FindingRow]:
     for f in common.sorted_findings(req.findings):
         base, cand = common.finding_values(f, VALUE_LIMIT)
         rows.append(FindingRow(f.level, f.type, common.finding_path(f), f.generalized_path, base, cand,
-                               common.rules_text(f, extras), f.message))  # fmt: skip
+                               common.rules_text(f, extras), common.finding_note(f, extras)))  # fmt: skip
     return rows
 
 
@@ -102,6 +102,7 @@ def render(data: ReportInput) -> str:
     views = [_view(i, req, data.extras.get(req.name)) for i, req in enumerate(result.requests)]
     suggestions = [(req.name, s) for req in result.requests for s in req.suggestions]
     return _template().render(
-        title=common.title(result), result=result, cells=common.summary_cells(result), requests=views,
+        title=common.title(result), result=result, compare=common.COMPARE_TEXT[data.compare],
+        cells=common.summary_cells(result), requests=views,
         suggestions=suggestions, unmatched=common.unmatched_text(data), warnings=common.all_warnings(result),
     )  # fmt: skip

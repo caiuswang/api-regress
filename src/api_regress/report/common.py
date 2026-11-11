@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+import yaml
+
+from api_regress.core.config import Assert, Rule
 from api_regress.core.jsonload import load_body
 from api_regress.core.models import Absent, Finding, Level, RuleRef, Side, WarningItem
 from api_regress.core.reportdata import ReportInput, RequestExtras
@@ -19,6 +23,8 @@ SIDE_TEXT: dict[Side, str] = {"baseline": "基线", "candidate": "候选"}
 ABSENT_TEXT = "(缺失)"
 REDACTED = "<redacted>"
 COMMAND_TEXT = {"run": "run", "compare": "snapshot compare"}
+COMPARE_TEXT = {"structure": "对比模式 structure（只比结构，值只在规则要求时比较）", "values": "对比模式 values（比较值）"}
+_ASSERT_PATH = re.compile(r"\$assert\[(\d+)\]")
 
 
 def _summary_text(values: Any, finding_type: str) -> str:
@@ -68,14 +74,50 @@ def finding_path(finding: Finding) -> str:
     return f"{finding.path}（示例下标 {finding.example_index}）"
 
 
+def rule_attrs_text(rule: Rule) -> str:
+    """规则除 path 外的属性，写成单行 YAML：`on_value_change: breaking`、`decimal: {}`、`array: {mode: keyed, keys: [sku_id]}`。"""
+    attrs = rule.model_dump(exclude={"path"}, exclude_none=True, exclude_defaults=True)
+    flow = yaml.safe_dump(attrs, default_flow_style=True, allow_unicode=True, sort_keys=False, width=1 << 30)
+    return flow.strip()[1:-1]
+
+
 def rule_ref_text(ref: RuleRef, extras: RequestExtras | None) -> str:
     where = f"defaults.rules[{ref.index}]" if ref.scope == "defaults" else f"rules[{ref.index}]"
-    path = extras.rule_paths.get(ref) if extras else None
-    return f"{where} {path}" if path else where
+    rule = extras.rules.get(ref) if extras else None
+    return f"{where} {rule.path}（{rule_attrs_text(rule)}）" if rule else where
+
+
+def _assert_of(finding: Finding, extras: RequestExtras | None) -> tuple[int, Assert] | None:
+    """assert 的 finding 用伪路径 `$assert[i]` 指向本请求的第 i 个 assert。"""
+    match = _ASSERT_PATH.fullmatch(finding.path)
+    if not (match and extras and finding.type in ("assert_failed", "assert_error")):
+        return None
+    index = int(match.group(1))
+    return (index, extras.asserts[index]) if index < len(extras.asserts) else None
+
+
+def _source_text(finding: Finding, extras: RequestExtras | None) -> str:
+    found = _assert_of(finding, extras)
+    if found is not None:
+        return f"asserts[{found[0]}] {found[1].expr}"
+    if finding.type == "business_error" and extras and extras.success:
+        return f"{extras.success.where} {extras.success.expr}"
+    return ""
 
 
 def rules_text(finding: Finding, extras: RequestExtras | None) -> str:
-    return "；".join(rule_ref_text(ref, extras) for ref in finding.rule_refs)
+    """报出这条 finding 的 suite 配置：命中的规则（位置、路径、内容），或 assert / success 的表达式。"""
+    if finding.rule_refs:
+        return "；".join(rule_ref_text(ref, extras) for ref in finding.rule_refs)
+    return _source_text(finding, extras)
+
+
+def finding_note(finding: Finding, extras: RequestExtras | None) -> str | None:
+    """finding 的说明。没配 message 的 assert，说明就是表达式本身，已经写在「命中的规则」里，不再重复。"""
+    found = _assert_of(finding, extras)
+    if found is not None and finding.message == found[1].expr:
+        return None
+    return finding.message
 
 
 def sorted_findings(findings: list[Finding]) -> list[Finding]:

@@ -48,7 +48,7 @@ asserts:
 - 结果为 `False`：`assert_failed`，级别由 `level` 决定。
 - 求值出错：`assert_error`（固定为 suspicious），其余 assert 照常执行。
 - 只在请求状态为 `ok`、状态码相同、两侧都是 JSON、并且没有 `business_error` 时执行。
-- 伪路径是 `$assert[<序号>]`，序号从 0 开始；`message` 写进 finding 的 `message`，没写时用表达式原文。
+- 伪路径是 `$assert[<序号>]`，序号从 0 开始；`message` 写进 finding 的 `message`，没写时用表达式原文。报告的「命中的规则」一列总会写出表达式（`asserts[0] <表达式>`），配了 `message` 也一样。
 
 ## 结果必须是 True 或 False
 

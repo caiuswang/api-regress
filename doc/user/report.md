@@ -19,13 +19,13 @@ api-regress run suite.yaml --format md,junit
 
 ## 报告的结构
 
-1. **汇总**：退出码和原因；请求数、各状态（`ok` / `error` / `inconclusive` / `unsupported`）的数量、各级别 finding 的数量、warning 数。HTML 还有一张请求一览表，点名字跳到详情。
+1. **汇总**：退出码和原因；请求数、各状态（`ok` / `error` / `inconclusive` / `unsupported`）的数量、各级别 finding 的数量、warning 数；本次的对比模式（`structure` 只比结构，`values` 比较值）。HTML 还有一张请求一览表，点名字跳到详情。
 2. **每条请求**：
    - 标题：`名字  方法 路径  基线状态码 → 候选状态码`；没有拿到响应时状态码写 `-`。
    - 状态不是 `ok` 时给出原因，例如"候选返回 401，检查候选的 token 或限流"。
    - 两侧的完整 URL、耗时、重试次数（HTML）。
    - **curl 复现命令**：带上 suite 里给这一侧配的请求头名字，值一律写成 `<redacted>`，复现前自己填上。
-   - **finding 表**：级别、类型、具体路径、泛化路径（HTML）、两侧的值、命中的规则。按 breaking → suspicious → info 排序。
+   - **finding 表**：级别、类型（后面括号里是说明，例如 asserts 的 `message`）、具体路径、泛化路径（HTML）、两侧的值、命中的规则。按 breaking → suspicious → info 排序。
    - **body 对照**（只有 HTML）：两侧 body 并排，只显示有差异的行和上下 3 行，中间省略的部分用 `⋯` 表示。左侧红底是基线里删掉或改掉的行，右侧绿底是候选里新增或改后的行；改动的行左右对应时，行内具体变了的字符用深色标出（超过 200 字符的行只整行标色）。JSON 按原文的小数位重新缩进排版；body 很大时只对比前 1500 行 / 20 万个字符，并注明已截断。
 3. **建议 ignore**：基线两次请求中值不同的字段，附带可以直接粘贴进 `rules` 的 YAML 片段。**不会自动生效**，确认是不稳定字段（时间戳、traceId 等）后再加。
 4. **本次未命中的规则**：在本次请求的 body 里一个路径都没匹配到的规则。只表示这次没用上（可能那条请求这次没返回该字段），不一定是规则过期了。
@@ -41,11 +41,20 @@ api-regress run suite.yaml --format md,junit
 | `{number}`、`{null, object}` | schema 模式的数组：所有元素在这个路径上出现过的类型 |
 | `小数位 {2}` → `小数位 {1, 2}` | schema 模式 + `decimal` 规则：所有元素的小数位集合。候选多出了 1 位小数 |
 | `（示例下标 3）` | schema 模式的 finding 附带一个出问题的元素下标，方便到 body 里找 |
-| 空 | 这类 finding 没有值，例如 `assert_failed`，看后面括号里的说明（asserts 的 `message`） |
+| 空 | 这类 finding 没有值，例如 `assert_failed`：看类型后面括号里的 `message` 和「命中的规则」一列里的表达式 |
 
 非 body 的 finding 用伪路径：`$status`（状态码）、`$success`（业务成功条件）、`$header.X-Name`（响应头）、`$body`（一侧是 JSON 另一侧不是）、`$assert[0]`（第几个 assert）。
 
-**命中的规则** 写成 `defaults.rules[1] **.amount` 或 `rules[0] data.amount`（本请求的第几条规则和它的路径），说明这条 finding 的级别或比较方式是哪条规则决定的。没写表示按默认行为报出。
+**命中的规则** 列出报出这条 finding 的 suite 配置，不用回头翻 suite：
+
+| 写法 | 含义 |
+|---|---|
+| `defaults.rules[1] **.amount（decimal: {}）`、`rules[0] data.amount（on_value_change: breaking）` | defaults 或本请求的第几条规则、它的路径和内容，说明级别或比较方式是哪条规则决定的。命中多条时用 `；` 分开 |
+| `asserts[0] cand.body.total > 100` | 本请求第几个 assert 和它的表达式（`assert_failed`、`assert_error`）。配了 `message` 时，message 写在类型后面的括号里 |
+| `defaults.success body.code == 0`、`success body.code == 0` | `business_error` 用的 `success` 表达式，以及它写在 defaults 还是本请求 |
+| 空 | 按默认行为报出，没有规则参与 |
+
+JUnit 里同样的内容写在每条 finding 末尾的 `[...]` 里。
 
 **泛化路径**（HTML）把具体下标换成 `[*]`、keyed 元素换成 `[*]`，可以直接写进规则的 `path`。
 
@@ -70,10 +79,10 @@ api-regress run suite.yaml --format md,junit
 ## 例：金额精度变化
 
 ```
-| breaking | scale_changed | data.list[*].price（示例下标 0） | 小数位 {2} | 小数位 {1, 2} | defaults.rules[0] **.price |
+| breaking | scale_changed | data.list[*].price（示例下标 0） | 小数位 {2} | 小数位 {1, 2} | defaults.rules[0] **.price（decimal: {}） |
 ```
 
-列表的 `price` 原来都是 2 位小数，候选里出现了 1 位（例如 `12.50` 变成 `12.5`），第一个出问题的元素是下标 0。命中的规则是 `defaults.rules[0]`（`**.price` 的 `decimal` 规则）。在 HTML 的 body 对照里能看到具体是哪个值。
+列表的 `price` 原来都是 2 位小数，候选里出现了 1 位（例如 `12.50` 变成 `12.5`），第一个出问题的元素是下标 0。命中的规则是 `defaults.rules[0]`（`**.price` 上的 `decimal` 规则）。在 HTML 的 body 对照里能看到具体是哪个值。
 
 ## 例：请求没比成
 

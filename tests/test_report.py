@@ -19,6 +19,7 @@ import pytest
 from api_regress import report as report_pkg
 from api_regress.cli import main
 from api_regress.core import service
+from api_regress.core.config import Rule
 from api_regress.core.reportdata import Reporter, ReportInput, RequestExtras
 from api_regress.core.samples import Sample
 from api_regress.report import common, html, junit, md, sidediff
@@ -27,14 +28,20 @@ from tests.mock_api import Reply, Server, j, req, run, suite_text
 GOLDEN = Path(__file__).parent / "golden"
 XSS = "<script>alert(1)</script>"
 
+ASSERTS = (
+    "    asserts:\n"
+    "      - expr: 'cand.body.data.total > 100'\n        message: 总额过低\n"
+    "      - expr: 'exists(cand.body, \"data.coupon_amount\")'\n        level: breaking\n"
+)
 REQUESTS = (
-    req("order-detail", "/orders/10086", extra="    headers:\n      X-Trace: t\n")
+    req("order-detail", "/orders/10086", extra="    headers:\n      X-Trace: t\n" + ASSERTS)
     + req("order-list", "/orders", extra="    query:\n      page: '1'\n")
     + req("xss", "/xss", extra="    rules:\n      - path: data.note\n        on_value_change: breaking\n")
     + req("expired", "/expired")
     + req("down", "/down")
     + req("page", "/page")
     + req("health", "/health", extra="    rules:\n      - path: data.nothing_here\n        ignore: true\n")
+    + req("biz", "/biz")
 )
 DEFAULTS = (
     '  success: "body.code == 0"\n'
@@ -56,6 +63,7 @@ def _server() -> Server:
     server.on("base", "/down", j({"code": 0})).on("cand", "/down", httpx.ConnectError("connection refused"))
     server.both("/page", Reply(body=f"<html>{XSS}</html>", content_type="text/html"))
     server.both("/health", j({"code": 0, "data": {"up": True}}))
+    server.on("base", "/biz", j({"code": 0})).on("cand", "/biz", j({"code": 1, "msg": "库存服务异常"}))
     return server
 
 
@@ -108,10 +116,10 @@ def test_junit_counts_follow_fail_on(captured):
     outcome = {name: [child.tag for child in case if child.tag != "system-out"] for name, case in cases.items()}
     assert outcome == {
         "order-detail": ["failure"], "order-list": ["failure"], "xss": ["failure"], "expired": ["error"],
-        "down": ["error"], "page": ["skipped"], "health": [],
+        "down": ["error"], "page": ["skipped"], "health": [], "biz": ["failure"],
     }  # fmt: skip
     attrs = {k: suite.get(k) for k in ("tests", "failures", "errors", "skipped")}
-    assert attrs == {"tests": "7", "failures": "3", "errors": "2", "skipped": "1"}
+    assert attrs == {"tests": "8", "failures": "4", "errors": "2", "skipped": "1"}
 
     never = ReportInput(captured.result.model_copy(update={"fail_on": "never"}), captured.out_dir, captured.extras)
     suite = ET.fromstring(junit.render(never)).find("testsuite")
@@ -136,15 +144,37 @@ def test_html_escapes_response_content(captured):
 def test_html_has_all_sections(captured):
     page = html.render(captured)
     for text in (
-        "退出码 1：存在 3 条达到 breaking 级别的 finding",
+        "退出码 1：存在 5 条达到 breaking 级别的 finding",
         "data.coupon_amount", "data.discount_amount",
         "data.list[*].price（示例下标 0）", "小数位 {2}", "小数位 {1, 2}",
         "curl -sS -i http://cand.test/orders/10086 -H &#39;Authorization: &lt;redacted&gt;&#39; -H &#39;X-Trace: &lt;redacted&gt;&#39;",
         "建议 ignore", "- path: server_time", "本次未命中的规则", "health: rules[0] data.nothing_here",
         "body 对照", "两侧 body 文本相同",
+        "对比模式 structure", "rules[0] data.note（on_value_change: breaking）", "defaults.success body.code == 0",
+        "总额过低", "asserts[0] cand.body.data.total &gt; 100", "asserts[1] exists(cand.body, &#34;data.coupon_amount&#34;)",
     ):  # fmt: skip
         assert text in page, text
     assert "secret-token" not in page
+
+
+def test_finding_shows_suite_config(captured):
+    """报出 finding 的 suite 配置直接写进报告：assert 的表达式（配了 message 也写）、success 表达式、规则内容；
+    没配 message 的 assert 不在类型后面重复表达式。"""
+    extras = captured.extras["order-detail"]
+    by_path = {f.path: f for f in captured.result.requests[0].findings}
+    with_message, bare = by_path["$assert[0]"], by_path["$assert[1]"]
+    assert common.rules_text(with_message, extras) == "asserts[0] cand.body.data.total > 100"
+    assert common.finding_note(with_message, extras) == "总额过低"
+    assert common.finding_note(bare, extras) is None
+    biz = next(r for r in captured.result.requests if r.name == "biz")
+    assert common.rules_text(biz.findings[0], captured.extras["biz"]) == "defaults.success body.code == 0"
+
+
+def test_rule_attrs_text():
+    rule = Rule(path="data.items", array={"keys": ["sku_id"]}, nullable=True)
+    assert common.rule_attrs_text(rule) == "array: {mode: keyed, keys: [sku_id]}, nullable: true"
+    assert common.rule_attrs_text(Rule(path="**.price", decimal={})) == "decimal: {}"
+    assert common.rule_attrs_text(Rule(path="x", decimal={"allow_string": True})) == "decimal: {allow_string: true}"
 
 
 def test_body_diff_truncated_when_large():

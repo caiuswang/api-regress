@@ -67,7 +67,7 @@ a { color: var(--info); }
 <main>
 <h1>{{ title }}</h1>
 <div class="meta">{{ result.started_at.strftime("%Y-%m-%d %H:%M:%S") }} – {{ result.finished_at.strftime("%H:%M:%S") }}
-  · --fail-on {{ result.fail_on }} · api-regress {{ result.tool_version }}{% if result.cancelled %} · <b>已取消</b>{% endif %}</div>
+  · --fail-on {{ result.fail_on }} · {{ compare }} · api-regress {{ result.tool_version }}{% if result.cancelled %} · <b>已取消</b>{% endif %}</div>
 
 <h2>汇总</h2>
 <div class="exit{% if result.exit_code != 0 %} fail{% endif %}">退出码 {{ result.exit_code }}：{{ result.exit_reason }}</div>

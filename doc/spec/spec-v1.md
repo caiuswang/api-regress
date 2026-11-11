@@ -504,12 +504,13 @@ snapshot/
 | `baseline/`、`candidate/` | 两侧响应。`candidate/` 给 `accept` 用，`baseline/` 用于排查 |
 
 **报告内容**
-1. **汇总**：请求数、各级别 finding 数、各请求状态的数量、退出码及原因。
+1. **汇总**：请求数、各级别 finding 数、各请求状态的数量、退出码及原因；本次的对比模式（`structure` / `values`）（D24）。
 2. **每条请求**：
    - 完整的请求 URL
    - 两侧的状态码、耗时、重试次数
    - 可以直接复现的 curl 命令（请求头的值显示为 `<redacted>`）
-   - finding 列表：具体路径、泛化路径、类型、级别、两侧的值、命中的规则
+   - finding 列表：具体路径、泛化路径、类型、级别、两侧的值、命中的规则，以及 finding 的说明（asserts 的 `message` 等）
+   - **报出 finding 的 suite 配置要能在报告里直接看到**（D24），不用回头翻 suite：命中的规则写出位置、路径和规则内容（如 `rules[0] data.amount（on_value_change: breaking）`）；`assert_failed` / `assert_error` 写出是第几个 assert 和它的表达式（配了 `message` 时表达式也要显示）；`business_error` 写出 `success` 表达式及其来源（`defaults.success` 或请求级 `success`）
    - 两侧 body 的对照 diff（只在 HTML 报告里有，过大时截断）：两侧并排，只显示有差异的行和上下 3 行；行内差异只在被替换的一段里按顺序一对一配对后高亮，超过 200 字符的行不做行内高亮、整行标色。生成耗时随行数线性增长
 3. **不稳定字段建议**：附带 YAML 片段。
 4. **本次未命中的规则**：
@@ -711,4 +712,5 @@ snapshot/
 | D20 | 实现 T5 时补齐的快照细节：manifest 字段与版本处理、快照目录的保护与 `--clean`、原子替换的残留恢复；record 只对基线按 §7.2 判定，`unsupported` 也写入，第 2 个 sample 不可用时只写 1 个，一条都没写入时（含 `--clean`）不改动快照；compare 只读，不清理残留；compare 在快照缺失时仍请求候选并写 run 目录；accept 按 record 的标准检查候选（候选 5xx 也拒绝），判定信息来自 `result.json` 新增的 `snapshot_problem`、`candidate_success`；accept 的 `--only` 未知 name 退出码 2（§4.1、§8） | 待确认（2026-11-11） |
 | D22 | 实现 T6 时补齐的报告细节：`--format` 只对 `run` / `snapshot compare` 有效，可重复，`none` 只输出 `result.json`，非法取值退出码 2；junit 里 `unsupported` 记 skipped，failure 优先于 error；报告先在内存里全部生成再写，生成失败退出码 3 且其余报告和 `result.json` 的退出码一致，写文件失败删掉本次的报告、不写 `result.json`；`result.json` 最后写，复用 run 目录时先删旧的 `result.json` 和旧报告，中断留下的目录可以复用；Markdown 展开有问题的请求（含 `unsupported`）（§4、§9）。T6 code review 后修订（2026-11-11） | 待确认（2026-11-11） |
 | D23 | HTML body 对照不再用 `difflib.HtmlDiff`（K21）：它在整段被替换的行里两两比较找最相似的行，1500 行都变了时要约 11 s，且每条请求各算一次。改为自己渲染并排表格：行级对齐用 `SequenceMatcher`，行内高亮只在 replace 块里按顺序一对一配对（git、diff2html 的做法），超过 200 字符的行整行标色；截断阈值不变（1500 行 / 20 万字符）。否决：降低截断阈值、body 过大只给提示（用户否决）；cydifflib（复杂度不变，只快约 2 倍）；diff2html 等 JS 库（违反报告不带 JS）（§9） | 已确认（2026-11-11） |
+| D24 | 报告里补上报出 finding 的 suite 配置（用户提出，2026-11-11）：原来配了 `message` 的 assert 只显示 message、表达式丢失，`$assert[0]` 看不出是哪条；`business_error` 不显示 `success` 表达式；命中的规则只有路径，看不出级别由哪个属性决定；汇总里没有对比模式。改为在「命中的规则」一列写出规则内容、assert 表达式、`success` 表达式，汇总写出对比模式。只改报告，`result.json` 不变（§9） | 待确认（2026-11-11） |
 | D21 | 快照相关命令收进 `snapshot` 命令组（用户提出，2026-11-11）：`record` / `compare` / `accept` 和 `run` 并列在顶层，用户分不清哪个是实时对比、哪个和快照有关。改为 `snapshot record` / `snapshot compare` / `snapshot accept`，快照目录参数从 `--snapshot` 改为 `-d` / `--dir`；不保留旧的顶层命令（v1 未发布）。`result.json` 的 `command` 仍是 `run` / `compare`，manifest 的 `source` 仍是 `record` / `accept`（§4） | 已确认（2026-11-11） |

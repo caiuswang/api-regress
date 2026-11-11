@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from api_regress.core.models import Finding
-from api_regress.core.reportdata import ReportInput
+from api_regress.core.reportdata import ReportInput, RequestExtras
 from api_regress.core.result import RequestResult, RunResult
 from api_regress.report import common
 
@@ -23,10 +23,15 @@ def xml_text(text: str) -> str:
     return _XML_INVALID.sub("\ufffd", text)
 
 
-def _finding_line(finding: Finding) -> str:
+def _finding_line(finding: Finding, extras: RequestExtras | None) -> str:
     base, cand = common.finding_values(finding, VALUE_LIMIT)
-    note = f"（{finding.message}）" if finding.message else ""
-    return xml_text(f"[{finding.level}] {finding.type} {common.finding_path(finding)}：{base} → {cand}{note}")
+    note = common.finding_note(finding, extras)
+    source = common.rules_text(finding, extras)
+    text = f"[{finding.level}] {finding.type} {common.finding_path(finding)}"
+    text += f"：{base} → {cand}" if base or cand else ""
+    text += f"（{note}）" if note else ""
+    text += f" [{source}]" if source else ""
+    return xml_text(text)
 
 
 def _outcome(req: RequestResult, result: RunResult) -> tuple[str, str] | None:
@@ -46,13 +51,14 @@ def _elapsed(req: RequestResult) -> float:
     return (ms or 0.0) / 1000
 
 
-def _system_out(req: RequestResult, shown: list[Finding]) -> str:
-    lines = [_finding_line(f) for f in common.sorted_findings(req.findings) if f not in shown]
+def _system_out(req: RequestResult, shown: list[Finding], extras: RequestExtras | None) -> str:
+    lines = [_finding_line(f, extras) for f in common.sorted_findings(req.findings) if f not in shown]
     lines += [xml_text(f"[warning {w.code}] {w.message}") for w in req.warnings]
     return "\n".join(lines)
 
 
-def _testcase(parent: ET.Element, req: RequestResult, result: RunResult, classname: str) -> str | None:
+def _testcase(parent: ET.Element, req: RequestResult, data: ReportInput, classname: str) -> str | None:
+    result, extras = data.result, data.extras.get(req.name)
     case = ET.SubElement(parent, "testcase", name=req.name, classname=classname, time=f"{_elapsed(req):.3f}")
     outcome = _outcome(req, result)
     shown: list[Finding] = []
@@ -62,8 +68,8 @@ def _testcase(parent: ET.Element, req: RequestResult, result: RunResult, classna
         if tag == "failure":
             shown = common.failing(req, result)
             node.set("type", "finding")
-            node.text = "\n".join(_finding_line(f) for f in shown)
-    out = _system_out(req, shown)
+            node.text = "\n".join(_finding_line(f, extras) for f in shown)
+    out = _system_out(req, shown, extras)
     if out:
         ET.SubElement(case, "system-out").text = out
     return outcome[0] if outcome else None
@@ -76,7 +82,7 @@ def render(data: ReportInput) -> bytes:
     suite = ET.Element("testsuite", name=xml_text(suite_name))
     counts = {"failure": 0, "error": 0, "skipped": 0}
     for req in result.requests:
-        tag = _testcase(suite, req, result, classname)
+        tag = _testcase(suite, req, data, classname)
         if tag is not None:
             counts[tag] += 1
     seconds = (result.finished_at - result.started_at).total_seconds()

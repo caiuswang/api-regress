@@ -24,7 +24,8 @@ def cell(text: str) -> str:
 
 def _finding_row(finding: Finding, extras: RequestExtras | None) -> str:
     base, cand = common.finding_values(finding, VALUE_LIMIT)
-    kind = f"{finding.type}（{finding.message}）" if finding.message else finding.type
+    note = common.finding_note(finding, extras)
+    kind = f"{finding.type}（{note}）" if note else finding.type
     cells = [finding.level, kind, common.finding_path(finding), base, cand, common.rules_text(finding, extras)]
     return "| " + " | ".join(cell(c) for c in cells) + " |"
 
@@ -47,7 +48,8 @@ def _summary(data: ReportInput) -> list[str]:
     result = data.result
     counts = " | ".join(f"{name} {n}" for name, n in common.summary_cells(result))
     head = f"## 汇总  退出码 {result.exit_code}：{result.exit_reason}"
-    when = f"{result.started_at:%Y-%m-%d %H:%M:%S}，--fail-on {result.fail_on}" + ("，已取消" if result.cancelled else "")
+    when = f"{result.started_at:%Y-%m-%d %H:%M:%S}，--fail-on {result.fail_on}，{common.COMPARE_TEXT[data.compare]}"
+    when += "，已取消" if result.cancelled else ""
     return [f"# {common.title(result)}", "", head, counts, "", when, ""]
 
 
