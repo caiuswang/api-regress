@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+import httpx
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
@@ -451,9 +452,23 @@ def _validate(data: dict, ctx: _Ctx, unresolved: set[Loc]) -> Suite:
     raise _Unverified([ctx.issue(_clean_loc(e["loc"]), "值来自缺失的环境变量，设置后才能校验") for e in errors])
 
 
-def _bad_base_url(url: str) -> bool:
-    parts = urlsplit(url)
-    return parts.scheme.lower() not in ("http", "https") or not parts.netloc
+BASE_URL_FORMAT = "必须是 http:// 或 https:// 开头的完整地址"
+BASE_URL_USERINFO = "不能带用户名或密码（user:pass@），凭据请写在 headers 里"
+
+
+def base_url_problem(url: str) -> str | None:
+    """base_url 不合法时返回原因。带 userinfo 的地址会把密码写进日志和 run 目录，所以拒绝。"""
+    try:
+        parts = urlsplit(url)
+        parts.port  # noqa: B018  端口越界时这里才抛 ValueError
+        httpx.URL(url)
+    except (ValueError, httpx.InvalidURL):
+        return BASE_URL_FORMAT
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+        return BASE_URL_FORMAT
+    if "@" in parts.netloc:
+        return BASE_URL_USERINFO
+    return None
 
 
 def _mapping(value: Any) -> dict:
@@ -503,8 +518,9 @@ def _post_checks(suite: Suite, ctx: _Ctx, sides: Collection[Side], unresolved: s
     for side in SIDES:
         loc = ("targets", side, "base_url")
         # 本命令不需要、且值还没确定（缺变量）的一侧不检查
-        if (side in sides or loc not in unresolved) and _bad_base_url(getattr(suite.targets, side).base_url):
-            issues.append(ctx.issue(loc, "base_url 必须是 http:// 或 https:// 开头的完整地址"))
+        problem = base_url_problem(getattr(suite.targets, side).base_url)
+        if problem and (side in sides or loc not in unresolved):
+            issues.append(ctx.issue(loc, f"base_url {problem}"))
     return issues
 
 

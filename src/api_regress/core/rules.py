@@ -251,3 +251,29 @@ def static_warnings(suite: Suite, line_of: LineOf = lambda loc: None) -> list[Wa
     for req, rules in zip(suite.requests, request_rules):
         out += _warnings_for(rules, defaults + rules, req.name, line_of)
     return out
+
+
+# ---------- 本次未命中的规则（运行时） ----------
+
+
+def _children(value: Any, path: paths.Path) -> Iterator[tuple[Any, paths.Path]]:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield child, (*path, paths.Key(key))
+    elif isinstance(value, list):
+        for i, child in enumerate(value):
+            yield child, (*path, paths.Index(i))
+
+
+def unmatched_rules(rules: Sequence[CompiledRule], bodies: Iterable[Any]) -> list[CompiledRule]:
+    """在原始 body 里一个路径都没匹配到的规则，和对比模式、ignore 无关。
+
+    数组元素用下标作为路径，`[*]` 和 `[n]` 都能匹配；命中一条就从待查集合移除，集合为空时提前结束。"""
+    pending = list(rules)
+    for body in bodies:
+        stack: list[tuple[Any, paths.Path]] = [(body, ())]
+        while stack and pending:
+            value, path = stack.pop()
+            pending = [r for r in pending if not paths.match(r.tokens, path)]
+            stack.extend(_children(value, path))
+    return pending

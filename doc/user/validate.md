@@ -11,7 +11,7 @@ api-regress validate <suite.yaml> [--log-level LEVEL] [--log-file FILE]
 - `version` 只能是 `1`
 - 请求 `name`：只能包含 `A-Z a-z 0-9 _ . -`，并且不能重复。**区分大小写**：`order-list` 和 `Order-List` 是两条请求，但在 macOS、Windows 上它们的快照文件会互相覆盖，不要这样起名
 - `method`：只能是 `GET` 或 `HEAD`，写方法（POST/PUT/PATCH/DELETE）一律报错
-- `base_url`：必须是 `http://` 或 `https://` 开头的完整地址（值来自缺失变量的那一侧除外）
+- `base_url`：必须是 `http://` 或 `https://` 开头的完整地址，不能带用户名或密码（`user:pass@`）（值来自缺失变量的那一侧除外）
 - 规则：路径语法（见 [suite.md](suite.md)）；至少写一个属性；`array` 的 `mode` 与 `keys` 是否一致
 - `success` 和 `asserts` 表达式：语法、变量名、函数名、参数个数是否在白名单里，见 [expressions.md](expressions.md)。表达式原文引用了没有设置的环境变量时，跳过这条表达式，设置后再检查
 - 环境变量：写法无法识别时报错；缺少的变量**不报错**，按 target 列成 warning

@@ -203,7 +203,7 @@ requests:
   - keyed 模式：`data.items[sku_id=A12].price`。这种写法**只用于展示**，不能写进规则。
   - schema 模式：等于泛化路径，同时附一个出问题元素的下标作为示例。
 - **泛化路径**：把下标和 key 都换成 `[*]`。报告里给出泛化路径，可以直接粘贴到规则里。
-- **非 body 的 finding 用伪路径**：`$status`、`$header.Content-Type`、`$success`、`$assert[0]`。
+- **非 body 的 finding 用伪路径**：`$status`、`$header.Content-Type`、`$success`、`$assert[0]`；`body_kind_changed` 用 `$body`，两侧的值为 `json` / `non-json`（D17）。
 
 ### 6.3 规则怎么生效
 每条规则都由若干属性组成：`ignore`、`decimal`、`scale_level`、`on_value_change`、`array`、`nullable`。
@@ -257,6 +257,8 @@ requests:
 - **两侧状态码相同但都不是 2xx，且没配 `success`**：照常对比，同时产生 warning："两侧都没有成功，测试数据可能已失效"。
 - **HEAD / 204**：只比较状态码和 `compare_headers`，不判定 success。
 - **3xx**：工具不跟随重定向，3xx 状态码本身就参与对比。
+- **`unsupported` 仍比较状态码**：两侧状态码不同时照样产生 `status_changed`（D17）。
+- **"HEAD 或 204"**：方法是 HEAD，或者任一侧返回 204（D17）。
 
 **body 的判定**
 - **是否为 JSON**：Content-Type 是 `application/json` 或任意 `*/*+json`（如 `application/problem+json`、`model/gltf+json`）时直接解析；没有 Content-Type 时尝试解析一次。
@@ -269,7 +271,18 @@ requests:
 **响应头对比**：默认不比较。列在 `compare_headers` 里的头按以下规则：
 - 候选缺失：breaking。
 - 值变化：suspicious。
-- `Content-Type` 的媒体类型变化：breaking；只改了 charset 不算。
+- `Content-Type` 的媒体类型变化：breaking；只改了 charset 等参数不算，不产生 finding。
+- 基线没有、候选新出现：`header_changed`（suspicious）（D17）。
+- 头名不区分大小写；伪路径里的名字按 `compare_headers` 的写法。
+
+**请求怎么发**（D17）
+- URL：`base_url` 去掉末尾的 `/`，拼上 `path`，再附加 `query`。`--baseline-url` / `--candidate-url` 覆盖对应一侧的 `base_url`，同样必须是 http(s) 地址，否则按命令行参数错误处理（退出码 2）。
+- 请求头按 defaults → target → 请求级的顺序合并，名字不区分大小写，越具体越优先。
+- 两侧同时发出；基线的 2 次串行，第 1 次失败（重试后）就不再发第 2 次。
+- `--only` 写了 suite 里不存在的 name：命令行参数错误，退出码 2。
+- `base_url`（含覆盖地址）不能带用户名或密码（`user:pass@`），否则按 suite / 参数错误处理（退出码 2）：URL 会写进日志和 run 目录，凭据只能放在请求头里（D18）。解析不了的地址（缺 `]`、端口越界、全角冒号等）同样是退出码 2。
+- `timeout` 是**单次请求的总时限**（从发出到读完 body），不是 httpx 的单次读写超时，超过即按超时处理（参与重试）（D18）。
+- 网络错误的原因只写异常类型和来自网络的说明；发送前校验请求时的错误（例如请求头的值有首尾空白、换行、非 ASCII 字符）只写固定说明，不能带出请求头的值（D18）。
 
 ### 7.3 业务成功条件 `success`
 很多接口用 `200 {code, msg, data}` 返回业务错误，只看状态码会漏掉。`success` 是一条表达式，可以在 defaults 里写，也可以在单条请求上覆盖。表达式里能用 `status`、`headers`、`body` 这几个变量。
@@ -469,6 +482,14 @@ snapshot/
 
 报告样例见 §12.2。
 
+**run 目录的细则**（D17）
+- `baseline/<name>.json`、`candidate/<name>.json`：`name`、`fingerprint`、`fingerprint_version`，以及 `samples` 列表（基线 1–2 个，候选 1 个）。每个 sample 存 URL、状态码、`Content-Type` 和 `compare_headers` 列出的响应头、body 原文（UTF-8 解码失败时存 `body_b64`）、耗时、重试次数；网络错误的 sample 只有 URL、`error` 和重试次数。格式和快照相同，不保存请求头。
+- `--out` 指向已存在的非空目录时，只有它是之前的 run 目录（`result.json` 能解析，且有 `schema_version`、`command`、`tool_version`）才复用，并先清掉其中的 `baseline/`、`candidate/`；否则拒绝写入，退出码 3。`--log-file` 指向的文件不算"无关文件"。默认目录同一秒内重复时加 `-2`、`-3` 后缀（D18）。
+- **`--out` 在发请求之前检查**，不能用就一个请求都不发；写入阶段失败时，返回值和 stdout 里的退出码、原因都是 3，stdout 的 result 行写"未写入"（D18）。
+- **取消**（`cancel_event`）：已经发出的请求会跑完；还没开始的请求（包括在排队等并发名额的）记为 `error`（原因"运行已取消"），`result.json` 里 `cancelled` 为真（D18）。
+- **单条请求出了工具自身的错误**（意外异常）：这条记为 `error`，原因写异常类型，其他请求照常，`result.json` 照常写，退出码 3。进度回调抛异常同样记为退出码 3，不中断运行（D18）。
+- **本次未命中的规则**：只统计至少有一侧拿到 JSON body 的请求。defaults 里的规则在所有这些请求里都没命中才列出（只列一次）；请求级规则按请求列出。
+
 ## 10. 非功能需求
 - **语言与协议**：Python 3.12；配置用 YAML；外部交互只走 HTTP/HTTPS。
 - **代码约束**：
@@ -642,3 +663,5 @@ snapshot/
 | D14 | schema 数组元素里的嵌套数组 | 一律按 schema 展平；内层长度不比较；内层一侧全空只给 warning；内层的非 schema `array` 规则给 warning（§7.6）（已确认，2026-11-10） |
 | D15 | schema 数组两侧都为空时是否提示 | 不提示，只在一侧为空、另一侧非空时提示（§7.6）（已确认，2026-11-10） |
 | D16 | 表达式里布尔值、生成器、`base`/`cand` 的语义 | 按 JSON 类型运算：布尔值不是数字（`false == 0` 为假，算术和比较大小报错）；生成器只能作为 `all`/`any`/`set`/`min`/`max` 的唯一参数；`base`/`cand` 不能直接参与运算（§7.7）（已确认，2026-11-10） |
+| D17 | 实现 `run` 时补齐的细节：`unsupported` 仍比较状态码；"HEAD 或 204"的判定；响应头新出现记 suspicious，Content-Type 只改参数不报；URL 拼接与请求头合并顺序；`body_kind_changed` 的伪路径 `$body`；`--only` 未知 name 和非法覆盖地址按参数错误；run 目录格式与复用规则；取消；未命中规则的统计范围（§7.2、§6.2、§9） | 已确认（2026-11-11） |
+| D18 | `run` 的安全与健壮性（T4 code review 后补充）：`base_url` 不能带 userinfo；`timeout` 是单次请求的总时限；网络错误原因不带请求头的值；`--out` 先检查、只复用 api-regress 写的 run 目录、日志文件不算无关文件、写入失败时退出码和原因一致；取消对排队中的请求生效；单条请求的意外异常不中断运行、退出码 3（§7.2、§9） | 已确认（2026-11-11） |

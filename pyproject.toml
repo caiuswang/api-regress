@@ -5,7 +5,7 @@ description = "对比基线与候选的 JSON API 响应结构，发现发版后�
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "httpx[brotli]>=0.27",
+    "httpx[brotli,socks]>=0.27",
     "pydantic>=2.7,<3",
     "PyYAML>=6.0",
     "Jinja2>=3.1",
@@ -23,6 +23,7 @@ dev = [
     "import-linter>=2",
     "deepdiff>=7",
     "pytest-httpserver>=1.0",
+    "jsonschema>=4.26.0",
 ]
 
 [build-system]

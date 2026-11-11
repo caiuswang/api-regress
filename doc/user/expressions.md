@@ -2,7 +2,7 @@
 
 `success` 和 `asserts` 都是写在 YAML 里的一行表达式，语法是 Python 表达式的一个很小的子集。`validate` 和每次运行开始前都会检查，不合法时退出码为 2，并指出出错的列。
 
-> `success` 判定和 asserts 的执行要等 `run` / `compare` 命令实现后才生效，本页只说明表达式本身怎么写。各种组合下的实际结果见 [expr-combinations.md](../dev/expr-combinations.md)。
+> 表达式在流程里什么时候执行见 [run.md](run.md) 的「每条请求的流程」。各种组合下的实际结果见 [expr-combinations.md](../dev/expr-combinations.md)。
 
 ## success：业务是否成功
 
@@ -24,7 +24,15 @@ requests:
 | `headers` | 响应头，名字**不区分大小写**：`headers["content-type"]` |
 | `body` | 解析后的 JSON 响应体 |
 
-表达式出错（例如字段不存在）时视为**不满足**，并给出 warning。
+表达式出错（例如字段不存在）时视为**不满足**，并给出 `success_eval_error` 提示。
+
+**只对 JSON 响应求值**：HEAD、204、非 JSON 的响应跳过这一步。
+
+| 情况 | 结果 |
+|---|---|
+| 基线不满足 | 请求状态为 `inconclusive`（基线业务失败），不再对比 |
+| 基线满足、候选不满足 | `business_error`（breaking），跳过 body 对比和 asserts |
+| 基线第 2 次请求不满足 | 没有不稳定字段建议，给出 `second_sample_unavailable` 提示 |
 
 ## asserts：同时比较基线和候选
 
@@ -39,6 +47,8 @@ asserts:
 
 - 结果为 `False`：`assert_failed`，级别由 `level` 决定。
 - 求值出错：`assert_error`（固定为 suspicious），其余 assert 照常执行。
+- 只在请求状态为 `ok`、状态码相同、两侧都是 JSON、并且没有 `business_error` 时执行。
+- 伪路径是 `$assert[<序号>]`，序号从 0 开始；`message` 写进 finding 的 `message`，没写时用表达式原文。
 
 ## 结果必须是 True 或 False
 

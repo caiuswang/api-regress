@@ -11,7 +11,7 @@
 
 差异分为 **breaking / suspicious / info** 三级，结果输出成报告，同时给出 CI 可直接使用的退出码。
 
-> 项目还在开发中：目前可用的是 `validate` 命令和对比、表达式引擎本身；`run`、`record`、`compare`、`accept` 和报告尚未实现。下面的用法是设计好的目标形态。
+> 项目还在开发中：目前可用的是 `validate` 和 `run`（输出 `result.json` 和两侧响应）；`record`、`compare`、`accept` 以及 HTML / Markdown / JUnit 报告尚未实现。下面的用法里包含设计好的目标形态。
 
 ## 适用场景
 
@@ -85,7 +85,7 @@ api-regress compare suite.yaml --snapshot snap/   # 发版后
 api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-detail
 ```
 
-报告输出到 `api-regress-out/<时间戳>/` 目录。
+结果输出到 `api-regress-out/<时间戳>/` 目录（`result.json`、两侧的响应），stdout 打印摘要，见 [doc/user/run.md](doc/user/run.md)。
 
 **退出码**
 
@@ -103,9 +103,11 @@ api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-de
 |---|---|
 | [doc/user/suite.md](doc/user/suite.md) | suite 配置格式：完整示例、字段、路径写法、规则怎么合并 |
 | [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、warning、环境变量、YAML 常见坑 |
+| [doc/user/run.md](doc/user/run.md) | `run` 命令：请求怎么发、每条请求的流程与状态、非 body 的差异、不稳定字段建议、stdout、退出码、run 目录与 `result.json` |
 | [doc/user/compare.md](doc/user/compare.md) | 对比规则：差异类型与级别、规则属性、数组模式怎么选、已知限制 |
 | [doc/user/expressions.md](doc/user/expressions.md) | `success` 与 `asserts` 表达式的写法、内置函数、不支持的语法 |
-| [doc/dev/architecture.md](doc/dev/architecture.md) | 模块职责、关键路径、主流程（随实现补充） |
+| [doc/dev/architecture.md](doc/dev/architecture.md) | 模块职责、关键路径、主流程、`result.json` 契约（随实现补充） |
+| [schema/result.schema.json](schema/result.schema.json) | `result.json` 的 JSON Schema（自动导出） |
 | [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md) | 对比引擎在各种组合下的实际输出（自动生成） |
 | [doc/dev/expr-combinations.md](doc/dev/expr-combinations.md) | 表达式引擎在各种组合下的实际结果（自动生成） |
 
@@ -129,5 +131,7 @@ uv run pytest
 
 改了对比行为时，`tests/test_diff_combinations.py` 会失败：确认变化符合预期后运行 `uv run python scripts/gen_diff_combinations.py` 重新生成 [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md)。
 改了表达式行为时同理：`tests/test_expr_combinations.py` 的快照测试会失败，确认后运行 `uv run python scripts/gen_expr_combinations.py` 重新生成 [doc/dev/expr-combinations.md](doc/dev/expr-combinations.md)；同一文件里的不变量测试失败则说明是 bug。
+
+改了 `result.json` 的数据模型时，`tests/test_result_schema.py` 会失败：确认后运行 `uv run python scripts/export_result_schema.py` 重新导出 [schema/result.schema.json](schema/result.schema.json)。
 
 项目规则和提交约定见 [CLAUDE.md](CLAUDE.md)。

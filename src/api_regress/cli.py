@@ -6,18 +6,21 @@ import functools
 import logging
 import sys
 from collections.abc import Callable, Sequence
-from typing import Any
+from pathlib import Path
+from typing import Any, get_args
 
 import click
 
 from api_regress import __version__
 from api_regress.core import service
 from api_regress.core.config import format_where
+from api_regress.core.result import FailOn
 
 log = logging.getLogger("api_regress")
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+FAIL_ON = get_args(FailOn)
 EXIT_SUITE_ERROR = 2
 EXIT_INTERNAL_ERROR = 3
 
@@ -90,6 +93,54 @@ def validate(suite: str) -> int:
     report = service.validate_suite_sync(suite)
     _print_validation(report)
     log.info("validate 结束：退出码 %d（%s）", report.exit_code, "通过" if report.ok else "suite 有问题")
+    return report.exit_code
+
+
+def _print_issues(report: service.RunReport) -> None:
+    click.echo(f"INVALID, {len(report.errors)} error(s)")
+    for issue in report.errors:
+        click.echo(f"  {issue}")
+
+
+def _print_run(report: service.RunReport) -> None:
+    result = report.result
+    assert result is not None
+    s = result.summary
+    click.echo(
+        f"requests {s.requests} | ok {s.ok} | error {s.error} | inconclusive {s.inconclusive} | unsupported {s.unsupported}"
+    )
+    click.echo(f"findings: breaking {s.breaking} | suspicious {s.suspicious} | info {s.info}")
+    for req in result.requests:
+        if req.status != "ok":
+            click.echo(f"  {req.name}: {req.status}（{req.reason}）")
+    suggestions = sum(len(req.suggestions) for req in result.requests)
+    extras = [f"warnings {s.warnings}", f"建议 ignore {suggestions}", f"本次未命中的规则 {len(result.unmatched_rules)}"]
+    click.echo(" | ".join(extras))
+    click.echo(f"result: {Path(report.out_dir) / 'result.json'}" if report.out_dir else "result: 未写入")
+
+
+@cli.command()
+@click.argument("suite", type=click.Path(dir_okay=False))
+@click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="run 目录，默认 ./api-regress-out/<时间>/")
+@click.option("--fail-on", type=click.Choice(FAIL_ON), default="breaking", show_default=True)
+@click.option("--baseline-url", help="覆盖 suite 里基线的 base_url")
+@click.option("--candidate-url", help="覆盖 suite 里候选的 base_url")
+@click.option("--only", multiple=True, help="只处理指定的请求，可以重复")
+@common_options
+def run(suite: str, out: Path | None, fail_on: str, baseline_url: str | None, candidate_url: str | None,
+        only: tuple[str, ...]) -> int:  # fmt: skip
+    """两侧都实时请求并对比：基线 2 次、候选 1 次。"""
+    log_file = click.get_current_context().params.get("log_file")
+    options = service.RunOptions(
+        out=out, fail_on=fail_on, baseline_url=baseline_url, candidate_url=candidate_url, only=list(only),
+        log_file=Path(log_file) if log_file else None,
+    )  # fmt: skip
+    report = service.run_sync(suite, options)
+    if report.errors:
+        _print_issues(report)
+    elif report.result is not None:
+        _print_run(report)
+    click.echo(f"exit {report.exit_code}: {report.exit_reason}")
     return report.exit_code
 
 

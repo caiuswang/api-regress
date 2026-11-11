@@ -1,0 +1,653 @@
+{
+  "$defs": {
+    "Finding": {
+      "description": "一条差异，参与退出码计算。\n\nbody 的 finding：`path` 是具体路径，`generalized_path` 可以直接写进规则。\n非 body 的 finding 用伪路径（`$status`、`$header.Content-Type` 等），`path_tokens` 为空。\nschema 数组里的 finding：两侧的值是类型集合或小数位集合，并附 `example_index`。\n`base_type` / `cand_type` 是两侧值的 JSON 类型（缺失时为 `absent`），用来区分 `12.50` 和 `\"12.50\"`、\n以及真实的 `{\"absent\": true}` 和缺失；值是集合、长度等汇总信息时为 None。\n`finding_id` 在一条请求的流程结束时填上，见 `finding_id()`。",
+      "properties": {
+        "base_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "object",
+                "array",
+                "string",
+                "number",
+                "boolean",
+                "null",
+                "absent"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Type"
+        },
+        "base_value": {
+          "default": null,
+          "title": "Base Value"
+        },
+        "cand_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "object",
+                "array",
+                "string",
+                "number",
+                "boolean",
+                "null",
+                "absent"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cand Type"
+        },
+        "cand_value": {
+          "default": null,
+          "title": "Cand Value"
+        },
+        "example_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Example Index"
+        },
+        "finding_id": {
+          "default": "",
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "generalized_path": {
+          "title": "Generalized Path",
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "breaking",
+            "suspicious",
+            "info"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "path_tokens": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PathToken"
+          },
+          "title": "Path Tokens",
+          "type": "array"
+        },
+        "rule_refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RuleRef"
+          },
+          "title": "Rule Refs",
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "status_changed",
+            "body_kind_changed",
+            "business_error",
+            "header_missing",
+            "header_changed",
+            "field_removed",
+            "type_changed",
+            "nullability_changed",
+            "scale_changed",
+            "field_added",
+            "array_length_changed",
+            "element_missing",
+            "element_added",
+            "value_changed",
+            "assert_failed",
+            "assert_error"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "level",
+        "path",
+        "generalized_path"
+      ],
+      "title": "Finding",
+      "type": "object"
+    },
+    "PathToken": {
+      "description": "具体路径的一级：key / index（positional）/ any（schema、unordered）/ keyed（展示用标签）。",
+      "properties": {
+        "kind": {
+          "enum": [
+            "key",
+            "index",
+            "any",
+            "keyed"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "PathToken",
+      "type": "object"
+    },
+    "RequestResult": {
+      "description": "一条请求的结果。`baseline` 有 1 到 2 个 sample，只有第 1 个参与对比。",
+      "properties": {
+        "baseline": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SampleInfo"
+          },
+          "title": "Baseline",
+          "type": "array"
+        },
+        "candidate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SampleInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "findings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "fingerprint": {
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "error",
+            "inconclusive",
+            "unsupported"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "suggestions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Suggestion"
+          },
+          "title": "Suggestions",
+          "type": "array"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/WarningItem"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "method",
+        "status",
+        "fingerprint"
+      ],
+      "title": "RequestResult",
+      "type": "object"
+    },
+    "RuleRef": {
+      "description": "规则的位置：defaults.rules[index] 或本请求的 rules[index]。",
+      "properties": {
+        "index": {
+          "title": "Index",
+          "type": "integer"
+        },
+        "scope": {
+          "enum": [
+            "defaults",
+            "request"
+          ],
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "index"
+      ],
+      "title": "RuleRef",
+      "type": "object"
+    },
+    "SampleInfo": {
+      "description": "一侧的一次请求。不含请求头；`error` 是网络错误或超时的原因。",
+      "properties": {
+        "content_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Type"
+        },
+        "elapsed_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsed Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "retries": {
+          "default": 0,
+          "title": "Retries",
+          "type": "integer"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Status"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "status"
+      ],
+      "title": "SampleInfo",
+      "type": "object"
+    },
+    "Suggestion": {
+      "description": "不稳定字段建议：`path` 是泛化路径，`yaml` 是可以直接粘贴进 rules 的片段。不会自动生效。",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "yaml": {
+          "title": "Yaml",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "reason",
+        "yaml"
+      ],
+      "title": "Suggestion",
+      "type": "object"
+    },
+    "Summary": {
+      "properties": {
+        "breaking": {
+          "default": 0,
+          "title": "Breaking",
+          "type": "integer"
+        },
+        "error": {
+          "default": 0,
+          "title": "Error",
+          "type": "integer"
+        },
+        "inconclusive": {
+          "default": 0,
+          "title": "Inconclusive",
+          "type": "integer"
+        },
+        "info": {
+          "default": 0,
+          "title": "Info",
+          "type": "integer"
+        },
+        "ok": {
+          "default": 0,
+          "title": "Ok",
+          "type": "integer"
+        },
+        "requests": {
+          "default": 0,
+          "title": "Requests",
+          "type": "integer"
+        },
+        "suspicious": {
+          "default": 0,
+          "title": "Suspicious",
+          "type": "integer"
+        },
+        "unsupported": {
+          "default": 0,
+          "title": "Unsupported",
+          "type": "integer"
+        },
+        "warnings": {
+          "default": 0,
+          "title": "Warnings",
+          "type": "integer"
+        }
+      },
+      "title": "Summary",
+      "type": "object"
+    },
+    "UnmatchedRule": {
+      "description": "本次未命中的规则：在本次运行的请求的原始 body 里一个路径都没匹配到。request 为 None 表示 defaults 里的规则。",
+      "properties": {
+        "index": {
+          "title": "Index",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "request": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request"
+        },
+        "scope": {
+          "enum": [
+            "defaults",
+            "request"
+          ],
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "index",
+        "path"
+      ],
+      "title": "UnmatchedRule",
+      "type": "object"
+    },
+    "WarningItem": {
+      "description": "提示信息。不是 finding，不参与退出码。",
+      "properties": {
+        "code": {
+          "enum": [
+            "env_var_missing",
+            "array_degraded_to_schema",
+            "array_empty",
+            "rule_ineffective_in_schema",
+            "rule_under_ignored",
+            "index_rule_ineffective",
+            "both_non_2xx",
+            "json_parse_failed",
+            "nan_or_infinity",
+            "duplicate_key",
+            "success_eval_error",
+            "second_sample_unavailable",
+            "fingerprint_mismatch"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Location"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "request": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "WarningItem",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "cancelled": {
+      "default": false,
+      "title": "Cancelled",
+      "type": "boolean"
+    },
+    "command": {
+      "enum": [
+        "run",
+        "compare"
+      ],
+      "title": "Command",
+      "type": "string"
+    },
+    "exit_code": {
+      "title": "Exit Code",
+      "type": "integer"
+    },
+    "exit_reason": {
+      "title": "Exit Reason",
+      "type": "string"
+    },
+    "fail_on": {
+      "enum": [
+        "breaking",
+        "suspicious",
+        "info",
+        "never"
+      ],
+      "title": "Fail On",
+      "type": "string"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "requests": {
+      "items": {
+        "$ref": "#/$defs/RequestResult"
+      },
+      "title": "Requests",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "suite": {
+      "title": "Suite",
+      "type": "string"
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "tool_version": {
+      "title": "Tool Version",
+      "type": "string"
+    },
+    "unmatched_rules": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/UnmatchedRule"
+      },
+      "title": "Unmatched Rules",
+      "type": "array"
+    }
+  },
+  "required": [
+    "tool_version",
+    "command",
+    "suite",
+    "started_at",
+    "finished_at",
+    "fail_on",
+    "exit_code",
+    "exit_reason",
+    "summary",
+    "requests"
+  ],
+  "title": "api-regress result.json",
+  "type": "object"
+}

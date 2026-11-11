@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -133,8 +134,10 @@ class Finding(BaseModel):
     schema 数组里的 finding：两侧的值是类型集合或小数位集合，并附 `example_index`。
     `base_type` / `cand_type` 是两侧值的 JSON 类型（缺失时为 `absent`），用来区分 `12.50` 和 `"12.50"`、
     以及真实的 `{"absent": true}` 和缺失；值是集合、长度等汇总信息时为 None。
+    `finding_id` 在一条请求的流程结束时填上，见 `finding_id()`。
     """
 
+    finding_id: str = ""
     type: FindingType
     level: Level
     path: str
@@ -147,3 +150,18 @@ class Finding(BaseModel):
     example_index: int | None = None
     rule_refs: list[RuleRef] = []
     message: str | None = None
+
+
+def finding_id(request: str, kind: str, path: str) -> str:
+    """请求名 + 类型 + 具体路径的 hash。keyed 数组的具体路径用 key 值，schema 数组用泛化路径，
+    非 body 的 finding 用伪路径，所以同一个差异在两次运行中的 id 相同。"""
+    digest = hashlib.sha256("\x00".join((request, kind, path)).encode("utf-8")).hexdigest()
+    return digest[:16]
+
+
+class Suggestion(BaseModel):
+    """不稳定字段建议：`path` 是泛化路径，`yaml` 是可以直接粘贴进 rules 的片段。不会自动生效。"""
+
+    path: str
+    reason: str
+    yaml: str

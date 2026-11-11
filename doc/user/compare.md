@@ -1,7 +1,7 @@
 # 对比规则：会报出哪些差异
 
 > 本页说明 body 怎么比较、各种差异的含义和级别，以及规则怎么影响结果。
-> `run` / `compare` 命令还在开发中，对比引擎本身已经实现。各种组合下的实际输出见 [diff-combinations.md](../dev/diff-combinations.md)。
+> 状态码、响应头、业务错误这些 body 以外的差异见 [run.md](run.md)。各种组合下的实际输出见 [diff-combinations.md](../dev/diff-combinations.md)。
 
 ## 默认只比结构
 

@@ -2,7 +2,7 @@
 
 suite 是一个 YAML 文件，写明两个目标（基线、候选）和要发的请求。写完先用 `api-regress validate` 检查，见 [validate.md](validate.md)。
 
-> 目前只实现了 `validate`。`timeout`、`concurrency`、`retries`、`compare_headers` 等运行相关的字段已经会被校验，在 `run` / `record` / `compare` 实现后生效。
+> 目前实现了 `validate` 和 [`run`](run.md)；`record` / `compare` / `accept` 还在开发中。
 
 ## 完整示例
 
@@ -76,19 +76,19 @@ requests:
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `base_url` | 是 | `http://` 或 `https://` 开头的完整地址 |
+| `base_url` | 是 | `http://` 或 `https://` 开头的完整地址。不能带用户名或密码（`user:pass@`），凭据写在 `headers` 里 |
 | `headers` | 否 | 只发给这一侧的请求头，例如各自的 token。值必须是字符串 |
 
 **`defaults`**
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `timeout` | `10` | 单次请求超时，秒，必须大于 0 |
+| `timeout` | `10` | 单次请求的总时限（从发出到读完响应），秒，必须大于 0 |
 | `concurrency` | `4` | 并发数，至少 1 |
 | `retries` | `1` | 重试次数，只对连接错误和超时重试，任何状态码都不重试 |
 | `compare` | `structure` | `structure`：只比结构；`values`：所有字段都比较值，值不同记 suspicious。见 [compare.md](compare.md) |
 | `success` | 无 | 业务成功条件，见 [expressions.md](expressions.md) |
-| `headers` | `{}` | 两侧都发的请求头 |
+| `headers` | `{}` | 两侧都发的请求头。和 target、请求级的 headers 合并时，越具体越优先（名字不区分大小写） |
 | `rules` | `[]` | 对所有请求生效的规则 |
 
 **`requests[]`**
@@ -100,7 +100,7 @@ requests:
 | `path` | 是 | 拼在 `base_url` 后面的路径 |
 | `query` | 否 | 查询参数，值必须是字符串（`page: "1"`） |
 | `headers` | 否 | 这条请求额外的请求头 |
-| `compare_headers` | 否 | 要比较的响应头名字，默认不比较任何响应头 |
+| `compare_headers` | 否 | 要比较的响应头名字，默认不比较任何响应头。怎么比较见 [run.md](run.md) 的「非 body 的差异」 |
 | `success` | 否 | 覆盖 defaults 里的 `success`；写成 `success: null` 表示这条请求不判定 success（例如 `/health` 这类 body 里没有业务码的接口）；不写就沿用 defaults |
 | `rules` | 否 | 只对这条请求生效的规则 |
 | `asserts` | 否 | 同时比较基线和候选的表达式，每项有 `expr`、`level`（默认 suspicious）、`message`，见 [expressions.md](expressions.md) |

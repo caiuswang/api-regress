@@ -21,8 +21,7 @@ flowchart LR
 
 - `core` 是纯库，输入和输出都用 pydantic v2 模型。
 - 用 import-linter 的 `forbidden` 契约禁止 `core` 引用 `cli` 和 `report`，CI 里执行 `lint-imports`。已实测：违规时退出码为 1。
-- `core.service` 对外提供 async API：`validate_suite`、`run`、`record`、`compare`、`accept`，另外提供同步包装。
-- 进度用回调推送 pydantic 事件，如 `RequestStarted`、`RequestDone`。调用方可以传入 `cancel_event` 中途取消。
+- `core.service` 对外提供 async API：`validate_suite`、`run`、`record`、`compare`、`accept`，另外提供同步包装。`validate_suite`、`run` 已实现（进度事件、`cancel_event` 见 [doc/dev/architecture.md](../dev/architecture.md) 的「run 主流程」）。
 
 ### 1.1 建议的模块划分
 
@@ -52,16 +51,16 @@ flowchart LR
 
 | 位置 | 写法 |
 |---|---|
-| 请求状态判定 | 有序的 `(谓词, 状态, 提示)` 列表，取第一个匹配项 |
+| 请求状态判定 | 有序的 `(谓词, 状态, 提示)` 列表，取第一个匹配项（已实现，见 doc/dev） |
 | diff | 按 JSON 类型分发到不同函数（已实现，见 doc/dev） |
 | 数组模式 | `dict[mode, fn]` 分发（已实现，见 doc/dev） |
 | 规则合并 | 对每个属性用 `max(key=...)` 选胜者（已实现，见 [doc/dev/architecture.md](../dev/architecture.md)） |
-| 退出码 | 按 2>3>1>4>0 的顺序排列谓词列表，取第一个满足的 |
+| 退出码 | 按 2>3>1>4>0 的顺序排列谓词列表，取第一个满足的（已实现，见 doc/dev） |
 
 ## 2. JSON 解析与数字（已实测）
 
 - 解析、Decimal、重复 key、NaN（含比较时的特殊处理）、BOM、charset、小数位的计算方式**已实现**，见 [doc/dev/architecture.md](../dev/architecture.md) 的「JSON 解析」一节。
-- 尚未落地（T4）：不能在 JSON 输出里保留数字的原文。`str(Decimal('1.50E1'))` 得到 `'15.0'`，所以 `result.json` 里统一输出 Decimal 的规范字符串，这个字符串的小数位与原文相同。快照保存 body 的原文，以快照为准。
+- `result.json` 里的 Decimal 输出已实现（规范字符串，小数位与原文相同），见 doc/dev 的「result.json 契约」。快照保存 body 的原文，以快照为准。
 
 ## 3. 表达式引擎（simpleeval，已实测）
 
@@ -69,47 +68,27 @@ flowchart LR
 
 ## 4. result.json 契约
 
-- **顶层**：`schema_version`、运行元信息、汇总。
-- **枚举**：以下取值都与 spec 保持一致。
-  - 请求状态
-  - finding 类型和级别
-  - warning code：`array_degraded_to_schema`、`array_empty`、`rule_ineffective_in_schema`、`rule_under_ignored`、`index_rule_ineffective`、`both_non_2xx`、`json_parse_failed`、`nan_or_infinity`、`duplicate_key`、`success_eval_error`、`second_sample_unavailable`、`fingerprint_mismatch`；另有 `env_var_missing`，只出现在 `validate` 的输出里
-- **finding 的字段**：
-  - `finding_id`：对 `请求名 + 类型 + 具体路径` 取 hash。keyed 模式下具体路径用 key 值，因此跨运行也稳定；schema 模式下用泛化路径；非 body 的 finding 用伪路径。
-  - `path`、`path_tokens`、`generalized_path`
-  - `base_value`、`cand_value`：字段不存在时输出 `{"absent": true}`，以区分 `null`。schema 模式输出类型集合或小数位集合，外加 `example_index`。
-  - `rule_refs`：`{scope, index}` 形式。
-- **防漂移**：从 pydantic 导出 JSON Schema 提交到仓库，再用快照测试防止它漂移。
+已在 T4 落地，契约迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「result.json 契约」一节，JSON Schema 在 `schema/result.schema.json`。
 
 ## 5. 运行与 IO
 
-- **请求**：
-  - `httpx.AsyncClient` 加信号量控制并发。httpx 默认不跟随重定向，这点已实测。
-  - 依赖装 `httpx[brotli]`，br 解码已实测可用。
-- **重试**：
-  - 自己实现，只针对连接错误和超时，不针对任何状态码。
-  - 不用 transport 自带的 `retries`，因为它不会重试超时。
+- **请求、重试**：已在 T4 落地，迁到 doc/dev 的「run 主流程」。
 - **快照原子写入**：
   - 不能直接用 `os.replace` 覆盖已有的非空目录，会报 `ENOTEMPTY`（已实测）。
   - 正确做法：在同级目录写好临时目录，然后执行 `snap → snap.old`、`tmp → snap`，最后删除 `.old`。
   - 程序启动时清理残留的 `.old`。
-- **指纹**：对规范化 JSON 取 sha256。字段包括：method、path 模板、排序后的 query 模板、defaults 和请求级的 header 名（转小写后排序）。`fingerprint_version` 写入 manifest。
-- **body 存储**：UTF-8 解码失败时，改存 `body_b64`。
+- **指纹、body 存储**：计算和 sample 落盘格式已在 T4 落地（`core/samples.py`，run 目录在用），见 doc/dev。快照的 manifest 里写 `fingerprint_version`，留给 T5。
 - **HTML 报告**：
   - Jinja2 开启 `autoescape`。
   - 两侧对照用 `difflib.HtmlDiff(context=True)` 生成，已实测它会转义 `<script>`。body 过大时截断，不引入 JS 库。
-- **未命中规则检测**：遍历一遍原始 body，命中一条规则就从待查集合中移除，集合为空时提前结束。这一步与规则合并共用同一个匹配函数。
+- **未命中规则检测**：已在 T4 落地，见 doc/dev。
 
 ## 6. 日志
 
-- 使用标准库 `logging`，输出到 stderr，可以用 `--log-file` 同时写入文件。
-- **INFO**：spec §10 列出的关键节点。
-- **WARNING**：所有 warning、重试、指纹不一致。
-- **DEBUG**：额外输出响应体的前 2KB。
-- 任何级别都**不输出请求头的值**，只输出名称。验收时用哨兵 token 检查。
+已在 T4 落地，规定迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「日志」一节。
 
 ## 7. 依赖
 
-httpx[brotli]、pydantic v2、PyYAML（只用 `safe_load` / `compose`）、Jinja2、simpleeval、Click（CLI，见 spec D5）、radon、import-linter。
+httpx[brotli,socks]、pydantic v2、PyYAML（只用 `safe_load` / `compose`）、Jinja2、simpleeval、Click（CLI，见 spec D5）、radon、import-linter。
 
-测试使用 pytest、pytest-httpserver 或 `httpx.MockTransport`，以及 deepdiff（只用于交叉校验）。
+测试使用 pytest、pytest-httpserver 或 `httpx.MockTransport`，deepdiff（只用于交叉校验），jsonschema（校验 `result.json`）。

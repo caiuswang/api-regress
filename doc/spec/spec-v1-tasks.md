@@ -27,7 +27,7 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 | T1 | 已完成 | config / paths / rules / validate | 01, 02, 22, 36（检查本身能跑） | 纯单元测试 |
 | T2 | 已完成 | jsonload / diff | 04–09, 16–21 | 表驱动单元测试 |
 | T3 | 已完成 | expr | 24, 25 | 单元测试，含恶意用例 |
-| T4 | 未开始 | runner / status / service / run | 10–15, 23, 30, 31, 34, 35 | mock 服务集成测试 |
+| T4 | 已完成 | runner / status / service / run | 10–15, 23, 30, 31, 34, 35 | mock 服务集成测试 |
 | T5 | 未开始 | snapshot / record / compare / accept | 03, 26–29 | mock 服务集成测试 |
 | T6 | 未开始 | report / 文档 | 32, 33, 36（全部通过） | 快照测试 + 解析校验 |
 
@@ -129,6 +129,33 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 - `result.json` 是将来界面的数据契约，字段要稳定。
 
 **测试**：用 pytest-httpserver 或 `httpx.MockTransport` 做集成测试，mock 返回固定内容。从这个任务开始，整个流程可以端到端跑通。
+
+**已知问题（2026-11-11 code review 发现，暂缓处理）**
+
+请求头泄露和健壮性问题已修复（D18）。以下问题不影响主流程，先记录，后续单独处理；涉及行为变化的先改 spec 并和用户确认。
+
+| # | 问题 | 后果 | 处理方向 |
+|---|---|---|---|
+| K1 | 一个 `AsyncClient` 用默认的 cookie jar 服务两侧所有请求 | 基线的 `Set-Cookie` 会带到后续请求和候选上，两侧请求不再独立 | 关掉 cookie 持久化（需 spec 补充） |
+| K2 | `base_url` 带 query 或 fragment 时按字符串拼接 path | path 落进 query 串里，两侧都请求错地址，结果却"通过" | 校验时拒绝，退出码 2（需 spec 补充） |
+| K3 | 基线不是 JSON（没求 success）、候选不满足 success 时也报 `business_error` | 消息"基线满足 success"不实，且跳过了 `body_kind_changed` | `business_error` 要求基线确实满足 success |
+| K4 | unordered 数组元素个数变化在不稳定建议里记成数组路径的值变化 | 建议 ignore 整个数组 | 建议里过滤掉 |
+| K5 | HEAD / 204 也解析 body | 空 body 配 JSON Content-Type 时每次都出 `json_parse_failed` | HEAD / 204 不解析 body |
+| K6 | `unmatched_rules` 逐节点逐规则匹配 | 大 body 下比 diff 本身慢 25–50 倍（实测 24.6 s 中占 22.5 s） | 只展开规则用得到的路径，每个不同路径只匹配一次 |
+| K7 | 基线第 2 次请求返回 429 / 5xx 仍参与不稳定建议 | 建议不可靠 | 第 2 次不是有效响应时给 `second_sample_unavailable` |
+| K8 | 重复的 `Content-Type` 头被拼成 `a, b` | 判为非 JSON，误报 breaking | 取第一个值 |
+| K9 | 基线返回 401 / 5xx 时仍对它求 success | 多出 `success_eval_error` 提示 | 状态已判 inconclusive 时不求值 |
+| K10 | `--fail-on never` 有 breaking 时 exit 原因仍写"全部通过" | 输出误导 | 原因改为说明未按 finding 判定 |
+| K11 | `compare_headers` 里重复或只差大小写的名字 | 产生重复的 `finding_id` | 校验时去重或报错 |
+| K12 | 第 2 个基线 sample 的 `success_eval_error` 消息没说是第 2 次 | 难排查 | 消息带上 sample 序号 |
+| K13 | run 的 warning 没按 design §6 记 WARNING 日志 | 日志里看不到提示 | `evaluate` 结束时逐条记 WARNING |
+| K14 | `--only`、覆盖地址出错时不显示用法 | 体验问题 | 和其他参数错误一致 |
+| K15 | `result.json` Schema 里 `finding_id` 是可选字段 | 契约不够严格 | 改为必填，重新导出 Schema |
+| K16 | `samples.from_record` 遇到坏数据抛 `TypeError` / `ValueError` | T5 读快照时报错类型不统一 | 统一包成 `SampleFormatError` |
+| K17 | run.md 写"出错的请求不计入未命中统计"，和实现的口径（至少一侧有 JSON body）不完全一致 | 文档偏差 | 对齐文档 |
+| K18 | 代码重复：cli 和 result 各有一份退出码常量；`_print_issues` 和 `_print_validation` 重叠；`_SIDE_NAME` 重复、"baseline 的响应"和"基线"混用；`REQUEST_STATUSES`、`LEVELS` 未使用；`run_exit_state` 重复统计；`_response_headers` 等价于 `dict(response.headers)`；测试夹具重复 | 维护成本 | 顺手清理 |
+| K19 | 解析后的 body 在整个运行期间都留在内存里；`evaluate` 在事件循环上跑，拉高其他请求的 `elapsed_ms` | 大 suite 内存和耗时偏高 | 用完即丢；对比放到线程里 |
+| K20 | （待确认是否为问题）只有候选返回 204 时判 inconclusive；`ReadError`、`RemoteProtocolError` 不重试；基线第 2 次请求排在其他请求后面 | 可能影响结果或耗时 | 先确认期望行为 |
 
 ---
 

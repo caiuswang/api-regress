@@ -24,9 +24,21 @@ flowchart LR
   DIFF --> MODELS
   DIFF --> PATHS
   JSONLOAD[core.jsonload] --> MODELS
+  SVC --> RUNNER[core.runner]
+  SVC --> FLOW[core.flow]
+  SVC --> RUNDIR[core.rundir]
+  FLOW --> STATUS[core.status]
+  FLOW --> DIFF
+  FLOW --> UNSTABLE[core.diff.unstable]
+  FLOW --> JSONLOAD
+  FLOW --> EXPR
+  FLOW --> RESULT[core.result]
+  UNSTABLE --> DIFF
+  RUNNER --> SAMPLES[core.samples]
+  STATUS --> SAMPLES
+  RUNDIR --> SAMPLES
+  RUNDIR --> RESULT
 ```
-
-`core.diff`、`core.jsonload` 和表达式求值已实现，等 `run` 命令实现后由 `core.service` 调用（目前只有测试在用）。
 
 - `core` 是纯库，不能 import `cli` 或 `report`。由 `pyproject.toml` 里的 import-linter 契约保证，CI 执行 `lint-imports`。
 - `cli` 只做参数解析、日志初始化、打印摘要，业务都通过 `core.service`。
@@ -35,20 +47,27 @@ flowchart LR
 
 | 模块 | 职责 | 关键入口 |
 |---|---|---|
-| `core/models.py` | 跨模块共用的枚举和模型：`Level`、`Side`、`WarningCode`、`WarningItem`；finding 相关：`FindingType`、`Finding`、`ValueType`、`RuleRef`、`PathToken`、`Absent`（单例 `ABSENT`） | `format_loc`、`to_path_tokens` |
+| `core/models.py` | 跨模块共用的枚举和模型：`Level`、`Side`、`WarningCode`、`WarningItem`；finding 相关：`FindingType`、`Finding`、`ValueType`、`RuleRef`、`PathToken`、`Absent`（单例 `ABSENT`）；`Suggestion` | `format_loc`、`to_path_tokens`、`finding_id` |
 | `core/paths.py` | 路径语法：解析、格式化、匹配、泛化、具体程度 | `parse`、`format_path`、`match`、`covers`、`overlaps`、`generalize`、`specificity` |
-| `core/config.py` | suite 的 pydantic 模型；YAML 加载与规模限制；`${VAR}` 替换；报错行号 | `load_suite`、`load_suite_text`、`substitute_env`、`Suite.success_of`、`format_where` |
+| `core/config.py` | suite 的 pydantic 模型；YAML 加载与规模限制；`${VAR}` 替换；报错行号 | `load_suite`、`load_suite_text`、`substitute_env`、`Suite.success_of`、`base_url_problem`、`format_where` |
 | `core/expr.py` | success / asserts 表达式：AST 白名单编译、simpleeval 求值、计算量预算；重新导出 `expr_values` 的视图类 | `compile_expr`、`eval_success`、`eval_assert`、`Outcome` |
 | `core/expr_values.py` | 表达式里的值怎么运算：只读视图、JSON 语义的相等与包含、内置函数、运算符；类型不匹配一律抛 `ExprEvalError` | `JsonView`、`HeadersView`、`SideView`、`json_equal`、`contains`、`FUNCTIONS`、`OPERATORS`、`type_name` |
-| `core/rules.py` | 规则按属性合并、ignore 剪枝、静态无效规则检测 | `RuleSet.resolve`、`RuleSet.is_pruned`、`static_warnings` |
+| `core/rules.py` | 规则按属性合并、ignore 剪枝、静态无效规则检测、本次未命中的规则 | `RuleSet.resolve`、`RuleSet.is_pruned`、`static_warnings`、`unmatched_rules` |
 | `core/jsonload.py` | 判断 body 是否为 JSON、按 charset 解码、去 BOM、Decimal 解析、重复 key / NaN / 嵌套过深 | `load_body`、`parse_json`、`is_json_media`、`media_type`、`charset_of` |
 | `core/diff/walker.py` | 对比入口；按 JSON 类型分发；字段缺失、类型、可空性、decimal、值比较 | `diff_json`、`visit`、`DiffResult` |
 | `core/diff/arrays.py` | 四种数组模式的分发表 `_MODES`；keyed 配对与降级、positional、unordered（结构交给 schema，值按多重集合） | `compare_array` |
 | `core/diff/schema.py` | 不配对地比较元素：扁平表（路径 → 类型集合、小数位集合）及其比较；数组长度 finding | `compare_schema`、`compare_elements`、`build_table`、`report_length` |
 | `core/diff/context.py` | 一次对比的上下文：规则、对比模式、finding / warning 收集，`Presence`（字段 / 元素缺失用哪种 finding） | `DiffContext.report`、`DiffContext.warn`、`DiffContext.where`、`DiffContext.value_level` |
 | `core/diff/values.py` | JSON 类型、小数位、标量相等、标量的规范形式（keyed 的 key、unordered 的元素） | `json_type`、`scale`、`scale_of`、`decimal_text`、`scalar_equal`、`canon_scalar` |
-| `core/service.py` | 对外编排入口（目前只有 validate），提供 async 和同步两种调用 | `validate_suite`、`validate_suite_sync` |
-| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令）、日志初始化 | `main`、`cli`、`validate`、`setup_logging` |
+| `core/samples.py` | sample 的内存表示（`Sample`，响应头名字小写）、落盘格式（只留 `Content-Type` 和 `compare_headers`，body 存原文或 `body_b64`）、请求指纹 | `Sample`、`to_record`、`from_record`、`kept_headers`、`fingerprint`、`FINGERPRINT_VERSION` |
+| `core/runner.py` | 发请求：URL 拼接、请求头合并、`httpx.AsyncClient` + 信号量、自己实现的重试 | `make_call`、`build_url`、`merge_headers`、`Runner.fetch`、`describe_error`、`new_client` |
+| `core/status.py` | 请求状态判定：有序规则表 `STATUS_RULES` | `judge`、`Facts`、`RequestStatus` |
+| `core/flow.py` | 单条请求的对比流程：状态 → 状态码 → success → 响应头 → body → asserts → 不稳定字段建议；填 `finding_id` | `evaluate`、`Plan`、`Evaluation` |
+| `core/diff/unstable.py` | 不稳定字段建议：基线两个 sample 按 `compare: values` 对比后过滤 | `suggest_unstable`、`ignore_snippet` |
+| `core/result.py` | `result.json` 的数据模型；退出码谓词表 `EXIT_RULES` | `RunResult`、`RequestResult`、`SampleInfo`、`Summary`、`UnmatchedRule`、`exit_code`、`run_exit_state` |
+| `core/rundir.py` | run 目录：默认目录名、复用规则、两侧响应和 `result.json` 的写入 | `default_out_dir`、`check`、`prepare`、`write_side`、`write_result` |
+| `core/service.py` | 对外编排入口，提供 async 和同步两种调用；进度事件、取消；本次未命中的规则 | `validate_suite`、`validate_suite_sync`、`run`、`run_sync`、`RunOptions`、`RunReport`、`RequestStarted`、`RequestDone` |
+| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令）、日志初始化 | `main`、`cli`、`validate`、`run`、`setup_logging` |
 | `report/` | 报告渲染（尚未实现，目前为空包） | |
 
 ## validate 主流程
@@ -79,7 +98,7 @@ flowchart TD
 - **变量写法**：`Substitution` 的正则不允许默认值里出现 `$` 和 `}`。替换前先把所有合法变量删掉，剩下的文本里还有 `${` 就算无法识别（嵌套写法也因此被拒绝）。变量为空字符串时，有默认值就取默认值。
 - **环境变量按 target 区分**：`substitute_env` 返回的 `Substitution` 记录每个缺失变量的位置。`targets.baseline.*` 归 baseline，`targets.candidate.*` 归 candidate，其余（defaults、requests）归 shared。`load_suite_text` 的 `sides` 参数是本命令需要的 target：这些 target 和 shared 缺变量时报错；其余只记录在 `LoadedSuite.missing_vars`。
 - **缺失变量导致的类型错误**：`validate` 时缺失变量保留原文（如 `"${T}"`），非字符串字段会校验失败。pydantic 会一次报出所有字段的错误：只要有一条落在缺失变量以外的位置，就照常报错；全部落在缺失变量的位置时，抛 `UnverifiedSuite`，`service` 把它当作「通过但未完全校验」处理，并跳过规则检查。不再尝试删字段重试，因为那样会制造假报错（必填字段被删）或假通过。
-- **原始模板**：`LoadedSuite.raw` 保存替换前的数据，留给以后计算快照的请求指纹：指纹用 `${VAR}` 替换前的模板，换 token 或换环境不会让指纹变化。
+- **原始模板**：`LoadedSuite.raw` 保存替换前的数据，`samples.fingerprint` 用它计算请求指纹：指纹用 `${VAR}` 替换前的模板，换 token 或换环境不会让指纹变化。
 - **base_url 检查**放在 `_post_checks`：本命令需要的 target 一定检查；不需要的一侧只要值不依赖缺失变量也检查，所以 `validate` 能发现写死的错误地址。协议不区分大小写，并且要求有主机名。
 - **`success` 覆盖**：`Suite.success_of` 用 `model_fields_set` 区分「没写」和「写了 null」（请求级 `success: null` 表示不判定，不再沿用 defaults）。
 
@@ -112,7 +131,7 @@ flowchart TD
   - 内置函数都是包装过的版本（`_len`、`_set`、`_abs`、`_extreme` 等），参数类型不对时抛 `ExprEvalError`；`_set` 拒绝对象/数组元素和布尔值与数字混合（Python 的哈希会把 `1` 和 `True` 当成同一个元素）。`_step` 把列表字面量和元组也当数组，`get`/`exists` 对它们和对 body 里的数组行为一致。
   - `type_name` 把值映射成 JSON 类型名（数字、字符串、布尔值、null、对象、数组、集合、生成器、base/cand），所有错误信息都用它。
 - **`JsonView`**：`__slots__` 只有 `_data`、`_path`，类上除 dunder 外没有公开属性，所以 `getattr` 一定落到 `__getattr__`，只映射 JSON key（`body.x.items` 是字段而不是 `dict.items`）。不可写、不可 hash、不能比较大小；`==` 和 `in` 按 JSON 语义比较（见上）；迭代对象得到 key，迭代数组得到包装后的元素。错误信息带具体路径（`字段不存在：data.nope`）。`HeadersView` 继承它，key 统一转小写。`get`/`exists` 也能从 `SideView` 出发（`_step`）。
-- **求值结果**：`Outcome(passed, error)`。任何异常都被捕获，`passed=False`，`error` 是简短原因（截断到 300 字符）；结果不是 bool 也算出错。表达式只能看到响应，看不到请求头，所以错误信息里不会出现请求头的值。`run` 实现后据此产生 `assert_failed`（`error is None and not passed`）、`assert_error`（`error` 非空）和 `success_eval_error` warning。
+- **求值结果**：`Outcome(passed, error)`。任何异常都被捕获，`passed=False`，`error` 是简短原因（截断到 300 字符）；结果不是 bool 也算出错。表达式只能看到响应，看不到请求头，所以错误信息里不会出现请求头的值。`flow` 据此产生 `assert_failed`（`error is None and not passed`）、`assert_error`（`error` 非空）和 `success_eval_error` warning。
 - **接入配置**：`config._expr_fields` 从替换变量后的原始数据（而不是 `Suite` 模型）里列出所有表达式字段，`_expr_issues` 逐个编译，错误带行号；原文含缺失变量的跳过，不是字符串的交给 pydantic 报。它在 pydantic 校验通过后和 `_post_checks` 一起执行；校验未通过但错误都落在缺失变量上（`UnverifiedSuite`）时也会先执行，所以 `validate` 不会因为别的字段缺变量就放过非法表达式。
 
 ## 路径与匹配
@@ -128,7 +147,7 @@ flowchart TD
 - `RuleSet.resolve` 对每个属性分别在「匹配到且写了该属性」的规则里取 `max(rank)`；`Resolved.sources` 记录每个属性来自哪条规则（`RuleRef{scope, index}`）。结果按路径缓存在 `RuleSet` 实例里，`RuleSet` 按请求创建，规则不变。
 - ignore 剪枝：对比引擎自顶向下遍历，节点 `ignore` 为真就不再进入子树；`RuleSet.is_pruned` 供需要判断任意路径的场景使用（如不稳定字段建议），根节点 `$` 也算在内。
 - **缓存键**（`RuleSet._cache_key`）：keyed 元素只能被 `[*]` 和 `**` 匹配，和 `[*]` 等价；没有任何规则写到的下标同理。这两种 token 在缓存键里换成 `[*]`，大数组的每个元素共用一条缓存，不必把所有规则重新匹配一遍。
-- `CompiledRule` 按对象身份比较和 hash，可以放进 set（以后的「本次未命中的规则」检测会用到：遍历原始 body，命中一条就从待查集合移除）。
+- `CompiledRule` 按对象身份比较和 hash，可以放进 set。
 
 ## 静态无效规则（`static_warnings`）
 
@@ -187,8 +206,81 @@ flowchart TD
 - **warning 去重**：`DiffContext.warn` 用泛化路径（`DiffContext.where`）作为 `path`，按 (code, 泛化路径, 消息) 去重，所以 keyed / positional 数组里每个元素的同一个问题只提示一次。消息里的路径也用 `where`。
 - **keyed 降级**：`_index_by_key` 发现元素不是对象、key 缺失或不是标量、key 重复时返回 None，整个数组改走 `compare_schema`。key 用 `values.canon_scalar` 规范化，数字按数值相等，类型不同则不等。
 - **keyed 标签**（`arrays._label`）：数字按数值展示（`_number_label`，`1`、`1.0`、`1E0` 都是 `1`，所以 `finding_id` 跨运行稳定；这里只是展示，可以用 `normalize`），字符串会和数字、`true`/`false`/`null` 混淆或含特殊字符时加引号，因此 `1.5` 和 `"1.5"` 的路径不同。
-- **finding 字段**：`path` 是具体路径，`generalized_path` 是 `paths.generalize` 后的结果，`path_tokens` 是 `PathToken` 列表，`rule_refs` 是该节点生效的所有规则属性来源（`Resolved.refs`）。`base_type` / `cand_type` 是两侧值的 JSON 类型（缺失为 `absent`），因为 Decimal 序列化成字符串后，`12.50` 和 `"12.50"` 看不出区别，真实的 `{"absent": true}` 和缺失也分不开。schema 数组里的 finding（`report(summary=True)`），两侧的值是排好序的类型列表或小数位列表，`base_type` / `cand_type` 为 None；数组长度 finding 同理。`finding_id` 还没有生成，留给 `result.json` 输出时实现。
+- **finding 字段**：`path` 是具体路径，`generalized_path` 是 `paths.generalize` 后的结果，`path_tokens` 是 `PathToken` 列表，`rule_refs` 是该节点生效的所有规则属性来源（`Resolved.refs`）。`base_type` / `cand_type` 是两侧值的 JSON 类型（缺失为 `absent`），因为 Decimal 序列化成字符串后，`12.50` 和 `"12.50"` 看不出区别，真实的 `{"absent": true}` 和缺失也分不开。schema 数组里的 finding（`report(summary=True)`），两侧的值是排好序的类型列表或小数位列表，`base_type` / `cand_type` 为 None；数组长度 finding 同理。`finding_id` 由 `flow.evaluate` 在流程结束时用 `models.finding_id` 填上，见下文「result.json 契约」。
 - **交叉校验**：`tests/test_diff_crosscheck.py` 用随机 JSON 和 deepdiff（`zip_ordered_iterables=True`、`threshold_to_diff_deeper=0`）比较 positional + `compare: values` 下的路径集合。
+
+## run 主流程
+
+```mermaid
+flowchart TD
+  A[cli.run] --> B["service.run_sync → service.run"]
+  B --> C["config.load_suite（sides=两侧）"]
+  C -->|ConfigError| E2["退出码 2，不写 run 目录"]
+  C --> O["_check_options：--only 的 name、覆盖地址"]
+  O -->|有问题| E2
+  O --> K["rundir.check：--out 能不能用"]
+  K -->|RunDirError| E3a["退出码 3，不发请求"]
+  K --> P["_plans：每条请求编译 RuleSet、success、asserts，算指纹"]
+  P --> X["_Executor.run_all：asyncio.gather 所有请求"]
+  X --> X1["_one：拿到 gate 名额 → 检查 cancel_event → RequestStarted"]
+  X1 --> X2["_execute：runner.fetch 基线串行 2 次 ‖ 候选 1 次"]
+  X2 --> F["flow.evaluate → rules.unmatched_rules → RequestDone"]
+  X2 -->|意外异常| C["_crashed：这条记 error，内部错误"]
+  F --> R["_finish：_unmatched 汇总、退出码、Summary、RunResult"]
+  C --> R
+  R --> W["_write_run_dir：rundir.prepare → baseline/、candidate/ → result.json"]
+  W -->|OSError| E3["退出码 3"]
+```
+
+- **发请求**（`runner.py`）：`make_call` 拼 URL（`base_url` 去掉末尾 `/` 加 `path`，`copy_merge_params` 附加 query），按 defaults → target → 请求级合并请求头（名字转小写去重，保留最后的写法）。`Call.headers` 只用于发送。`new_client` 设 `follow_redirects=False`；一个 `Runner` 持有一个 `asyncio.Semaphore(concurrency)`，每次 `fetch`（含重试）占一个名额。每次尝试外面套 `asyncio.timeout(timeout)`：httpx 的 `Timeout` 只限制单次连接、读、写，慢慢吐数据的响应能拖很久，总时限超了抛内置的 `TimeoutError`，和 httpx 的超时一样参与重试。
+- **重试**：`Runner._fetch` 自己循环，只对 `RETRYABLE`（`httpx.ConnectError`、`httpx.TimeoutException`、总时限的 `TimeoutError`）重试，最多 `retries` 次；不用 transport 自带的 `retries`，因为它不会重试超时。其他 httpx 错误和不合法的 URL 直接记为失败的 sample（`status=None`）。任何状态码都不重试。
+- **失败原因不能带请求头的值**（`runner.describe_error`）：`error` 会进日志、stdout、`result.json` 和 run 目录。发送前校验请求时的异常（`httpx.LocalProtocolError`、`UnicodeError` 等）消息里带着出问题的请求头的值（例如 h11 的 `Illegal header value b'Bearer xxx '`），所以按 `_FIXED` 表只写异常类型加固定说明；来自网络的异常（`_DETAILED`：连接错误、超时、对端协议错误、读错误）带上消息，但消息里出现任何一个请求头的值（含去掉首尾空白的写法）就整条丢掉，截断到 300 字符。`httpx.MockTransport` 不做请求头校验，这条要用真实的本地服务测。
+- **`base_url` 检查**（`config.base_url_problem`）：`urlsplit`、`.port`、`httpx.URL` 任一抛错都算格式不合法；带 userinfo（`@`）的拒绝，因为 URL 会原样进日志和 run 目录，httpx 还会把它转成 Basic 认证头发出去。suite 校验和覆盖地址共用这个函数。
+- **基线两个 sample**：`_Executor._baseline` 串行请求，第 1 次失败就不发第 2 次；候选和基线用 `asyncio.gather` 同时进行。
+- **代理**：httpx 默认读取代理环境变量，依赖里装了 `httpx[socks]` 以支持 SOCKS 代理。测试里 `tests/conftest.py` 清掉代理变量，否则发往 mock 服务的请求会绕到代理上。
+- **取消**：`cancel_event` 只要有 `is_set()`（`threading.Event`、`asyncio.Event` 都行）。`asyncio.gather` 一开始就创建了所有请求的协程，所以 `_one` 先拿 `run_all` 里的 gate（`asyncio.Semaphore(concurrency)`）名额，再检查取消，排队中的请求才能被取消；已经取消的请求不发出，记为 `error`，`RunResult.cancelled` 为真。
+- **进度事件**：`on_event` 回调收到 `RequestStarted` / `RequestDone`（pydantic 模型，`event` 字段区分）。回调抛异常由 `_Executor._emit` 接住，记 ERROR 日志并计入 `callback_errors`，退出码 3，运行不中断。
+- **单条请求的意外异常**：`_one` 接住 `_execute` 抛出的任何 `Exception`，由 `_crashed` 把这条记为 `error`（原因写异常类型）并标记 `internal_error`，`_finish` 据此给退出码 3。日志只写异常类型和 `traceback.format_tb` 的调用栈，不写异常消息，免得把请求内容带进日志。
+
+### 单条请求（`flow.evaluate`）
+
+- `_Flow` 先用 `jsonload.load_body` 解析两侧的第 1 个 sample（失败的 sample 当作非 JSON），收集解析 warning。
+- 再对基线求 `success`（`_success_applies`：配了 success、不是 HEAD、不是 204、是 JSON；出错记 `success_eval_error`，视为不满足），连同两侧 sample 交给 `status.judge`。
+- `status.judge` 按 `STATUS_RULES` 取第一条匹配：网络错误 → 快照问题（`snapshot_problem`，留给 compare）→ 401/403/429 → 基线 5xx → 基线不满足 success → 两侧都非 JSON 且不是 HEAD/204（`Facts.body_less`）→ ok。
+- `_compare`：`ok` 和 `unsupported` 都先比状态码（`status_changed` 后直接结束）；只有 `ok` 继续：`both_non_2xx` → `business_error`（候选不满足 success）→ `headers` → body（不是 HEAD/204 且没有 business_error 时：`diff_json` 或 `body_kind_changed`）→ `asserts`（两侧都是 JSON 时）→ `second_sample` + `suggest_unstable`。
+- **响应头**（`_header_finding`）：值相同不报；候选缺失 `header_missing`（breaking）；`content-type` 只比 `jsonload.media_type`，不同记 breaking；其余（包括候选新出现）记 `header_changed`（suspicious）。
+- 非 body 的 finding 由 `_Flow.report` 生成：`path` 和 `generalized_path` 都是伪路径（`$status`、`$body`、`$success`、`$header.<名字>`、`$assert[i]`），`path_tokens` 为空。
+- `Evaluation.bodies`：两侧第 1 个 sample 和基线第 2 个 sample 中是 JSON 的 body，给「本次未命中的规则」用。
+
+### 不稳定字段建议（`diff/unstable.py`）
+
+`suggest_unstable` 用同一个 `RuleSet` 以 `compare: values` 调 `diff_json` 比较基线两个 sample，丢掉 `element_missing` / `element_added` / `array_length_changed`（数据量变化）和所有 warning，其余 finding 按泛化路径去重，`field_removed` / `field_added` 的原因是"只在一次基线响应里出现"，其他是"基线两次的值不同"。schema 数组内部本来就不比较值、ignore 的子树本来就跳过，所以不需要额外过滤。YAML 片段由 `yaml.safe_dump` 生成，`**.x`、`["a b"]` 这类路径会被正确加引号。
+
+### 本次未命中的规则
+
+`rules.unmatched_rules` 用显式栈遍历原始 body（对象 key 用 `Key`，数组元素用 `Index(i)`，所以 `[*]` 和 `[n]` 都能匹配），每个节点用 `paths.match`（和规则合并同一个匹配函数）把命中的规则移出待查列表，列表为空时提前结束。每条请求在 `_execute` 里算好自己的未命中规则（`_Executed.missed`，没有 JSON body 时为 `None`），这样出错只影响这一条；`service._unmatched` 只做汇总：只看 `missed` 不是 `None` 的请求；请求级规则按请求列出；defaults 规则取所有请求未命中集合的交集，只列一次。
+
+### run 目录（`rundir.py`）
+
+- `default_out_dir`：`api-regress-out/<YYYYmmdd-HHMMSS>`，已存在时加 `-2`、`-3`。
+- `check`：已存在的非空目录必须是之前的 run 目录才能用：`result.json` 能解析，并且有 `schema_version`、`command`、`tool_version`（`_written_by_us`）；`ignore` 里的文件（`RunOptions.log_file`，CLI 的 `--log-file`）不算。不满足抛 `RunDirError`（`OSError` 子类）。`service.run` 在发请求之前调用，失败直接返回退出码 3。
+- `prepare`：写入前再 `check` 一次，然后删掉旧的 `baseline/`、`candidate/`（记 INFO 日志）。不对 `--out` 本身做目录交换，避免 `--out .` 之类的误用删掉无关文件。
+- `write_side`：`<side>/<name>.json`，内容是 `name`、`fingerprint`、`fingerprint_version` 和 `samples`（`samples.to_record`）。先写两侧，最后写 `result.json`。
+
+### 退出码（`result.py`）
+
+`EXIT_RULES` 是按 2 > 3 > 1 > 4 > 0 排列的 `(码, 谓词, 原因)` 表，`exit_code(ExitState)` 取第一个满足的。`run_exit_state` 统计达到 `--fail-on`（`FAIL_ON_LEVELS`）的 finding 数和 `error` / `inconclusive` 的请求数。suite 错误（2）在加载阶段直接返回；单条请求的意外异常、进度回调出错通过 `ExitState.internal_error` 参与计算。写 run 目录失败（3）发生在写入阶段：`RunReport` 和其中的 `result` 都改成 3 和新原因，`out_dir` 为 `None`（CLI 显示 `result: 未写入`）；磁盘上如果已经写出了 `result.json`，里面是写入前算出的码。
+
+## result.json 契约
+
+- 模型在 `core/result.py`（引用 `models.Finding`、`WarningItem`、`Suggestion`），JSON Schema 由 `scripts/export_result_schema.py` 从 `RunResult.model_json_schema(mode="serialization")` 导出到 `schema/result.schema.json`，`tests/test_result_schema.py` 检查它和模型一致，并用 jsonschema 校验一次真实运行的输出。**改模型后重新导出，并在 review 时看 schema 的 diff**；加字段尽量给默认值，改名或删字段要升 `schema_version`。
+- 顶层：`schema_version`（当前 1）、`tool_version`、`command`、`suite`、`started_at` / `finished_at`（带时区的 ISO 8601）、`fail_on`、`cancelled`、`exit_code`、`exit_reason`、`summary`、`requests`、`unmatched_rules`。
+- 枚举与 `models.py` / `status.py` 一致：请求状态 `RequestStatus`、finding 类型 `FindingType`、级别 `Level`、warning code `WarningCode`（`env_var_missing` 只出现在 validate 的输出里）。
+- **数字**：pydantic 把 `Decimal` 序列化成 `str(Decimal)`，小数位与原文相同（`12.50` → `"12.50"`；指数写法会变成规范形式，如 `1.50E1` → `"15.0"`，小数位仍是 1）。数字和数字字符串靠 `base_type` / `cand_type` 区分。原文以 run 目录 / 快照里的 body 为准。
+- **缺失**：`{"absent": true}`（`models.ABSENT`），和 `null` 区分。schema 数组的 finding 两侧是类型集合或小数位集合，附 `example_index`。
+- **`finding_id`**：`models.finding_id` = sha256(请求名 \0 类型 \0 具体路径) 的前 16 个十六进制字符。keyed 数组的具体路径用 key 值（`[sku=A]`，数字按数值规范化），schema 数组的具体路径就是泛化路径，非 body 的 finding 用伪路径，所以跨运行稳定、keyed 不同元素互不相同。
+- **`rule_refs`**：`{scope, index}`，`scope` 为 `defaults` 或 `request`。
+- 不含任何请求头；sample 只给 URL、状态码、耗时、重试次数、Content-Type 和错误原因。
 
 ## CLI 约定
 
@@ -198,6 +290,7 @@ flowchart TD
 
 ## 日志
 
-- `cli.setup_logging` 把 `api_regress` logger 输出到 stderr，`--log-file` 时同时写文件。
-- 已有的 INFO 节点：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）。warning 以 WARNING 级别输出。
-- 报错和 warning 只包含字段位置、变量名，不包含请求头的值；`tests/test_cli.py` 用哨兵 token 校验。
+- 标准库 `logging`。`cli.setup_logging` 把 `api_regress` logger 输出到 stderr，`--log-file` 时同时写文件。
+- **INFO 节点**：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）；run 开始的请求数（`service.run`）、每次请求的发出和返回（`runner.Runner`：请求名、target、方法、URL、状态码、耗时、重试次数；发出时只列请求头的**名字**）、每条请求的状态和 finding / warning 数（`flow.evaluate`）、汇总（`service._log_summary`）、写入的每个文件（`service._write_run_dir`、`rundir.write_result`）、run 退出码及原因（`service._finish`、`service._suite_error`）。
+- **WARNING**：validate 的 warning、重试（`runner.Runner._fetch`）。**ERROR**：run 的 suite 错误、写 run 目录失败。**DEBUG**：响应体的前 2KB（`repr` 形式）。
+- **任何级别都不输出请求头的值**：`runner.Call.headers` 只传给 httpx；`Sample`、run 目录、`result.json` 里没有请求头；保存的响应头只有 `Content-Type` 和 `compare_headers`。报错和 warning 只包含字段位置、变量名。`tests/test_cli.py`（validate）和 `tests/test_run_cli.py`（run：stdout、stderr、日志文件、run 目录）用哨兵 token 校验。
