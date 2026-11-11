@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from api_regress.core.models import Finding, Level, Suggestion, WarningItem
 from api_regress.core.samples import Sample
-from api_regress.core.status import RequestStatus
+from api_regress.core.status import RequestStatus, SnapshotProblem
 
 SCHEMA_VERSION = 1
 
@@ -54,13 +54,18 @@ class SampleInfo(BaseModel):
 
 
 class RequestResult(BaseModel):
-    """一条请求的结果。`baseline` 有 1 到 2 个 sample，只有第 1 个参与对比。"""
+    """一条请求的结果。`baseline` 有 0 到 2 个 sample（快照里没有这条请求时为空），只有第 1 个参与对比。
+
+    `snapshot_problem`：compare 时快照缺失或指纹不一致。`candidate_success`：候选的 success 结果，没有求值为 None。
+    这两项给 accept 判断能不能接受候选响应。"""
 
     name: str
     method: str
     status: RequestStatus
     reason: str | None = None
     fingerprint: str
+    snapshot_problem: SnapshotProblem | None = None
+    candidate_success: bool | None = None
     baseline: list[SampleInfo] = []
     candidate: SampleInfo | None = None
     findings: list[Finding] = []
@@ -126,6 +131,7 @@ class ExitState:
     failing: int = 0
     fail_on: FailOn = "breaking"
     incomplete: int = 0
+    incomplete_text: str = "条请求是 error 或 inconclusive"
 
 
 ExitRule = tuple[int, Callable[[ExitState], bool], Callable[[ExitState], str]]
@@ -134,7 +140,7 @@ EXIT_RULES: tuple[ExitRule, ...] = (
     (EXIT_SUITE_ERROR, lambda s: s.suite_error, lambda s: "suite 或命令行参数有问题"),
     (EXIT_INTERNAL_ERROR, lambda s: s.internal_error, lambda s: "工具自身出错"),
     (EXIT_FINDINGS, lambda s: s.failing > 0, lambda s: f"存在 {s.failing} 条达到 {s.fail_on} 级别的 finding"),
-    (EXIT_INCOMPLETE, lambda s: s.incomplete > 0, lambda s: f"{s.incomplete} 条请求是 error 或 inconclusive"),
+    (EXIT_INCOMPLETE, lambda s: s.incomplete > 0, lambda s: f"{s.incomplete} {s.incomplete_text}"),
     (EXIT_OK, lambda s: True, lambda s: "全部通过"),
 )
 

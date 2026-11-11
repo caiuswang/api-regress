@@ -1,4 +1,6 @@
-"""run 目录：`result.json`，以及 `baseline/`、`candidate/` 下每条请求一个文件（落盘格式见 samples）。"""
+"""run 目录：`result.json`，以及 `baseline/`、`candidate/` 下每条请求一个文件（落盘格式见 samples）。
+
+accept 从这里读回候选响应（`read_result`、`read_side`）。"""
 
 from __future__ import annotations
 
@@ -10,8 +12,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from api_regress.core.config import NAME_PATTERN
 from api_regress.core.result import RunResult
-from api_regress.core.samples import FINGERPRINT_VERSION, Sample, to_record
+from pydantic import ValidationError
+
+from api_regress.core.samples import Sample, SampleFormatError, SideFile, dump_json, parse_side_document, side_document
 
 log = logging.getLogger(__name__)
 
@@ -76,25 +81,13 @@ def prepare(out: Path, ignore: Collection[Path] = ()) -> None:
     out.mkdir(parents=True, exist_ok=True)
 
 
-def _dump(path: Path, data: Any) -> None:
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
 def write_side(
     out: Path, side: str, name: str, fingerprint: str, samples: Iterable[Sample], compare_headers: list[str]
 ) -> Path:
     directory = out / side
     directory.mkdir(exist_ok=True)
     path = directory / f"{name}.json"
-    _dump(
-        path,
-        {
-            "name": name,
-            "fingerprint": fingerprint,
-            "fingerprint_version": FINGERPRINT_VERSION,
-            "samples": [to_record(s, compare_headers) for s in samples],
-        },
-    )
+    dump_json(path, side_document(name, fingerprint, samples, compare_headers))
     return path
 
 
@@ -103,3 +96,30 @@ def write_result(out: Path, result: RunResult) -> Path:
     path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
     log.info("写入 %s", path)
     return path
+
+
+def read_result(run_dir: Path) -> RunResult:
+    """读之前的 run 目录（accept 用）。不是 api-regress 写的、或解析不了时抛 RunDirError。"""
+    path = run_dir / RESULT_FILE
+    if not _written_by_us(path):
+        raise RunDirError(f"{run_dir} 不是 api-regress 的 run 目录（{RESULT_FILE} 不存在或不是 api-regress 写的）")
+    try:
+        result = RunResult.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError) as exc:
+        raise RunDirError(f"{path} 解析不了（{type(exc).__name__}）") from None
+    bad = [r.name for r in result.requests if not NAME_PATTERN.fullmatch(r.name)]
+    if bad:
+        raise RunDirError(f"{path} 里有不合法的请求名 {bad[0]!r}")
+    return result
+
+
+def read_side(run_dir: Path, side: str, name: str) -> SideFile | None:
+    """`<side>/<name>.json`；文件不存在时返回 None，格式不对抛 SampleFormatError。"""
+    path = run_dir / side / f"{name}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise SampleFormatError(f"{path} 读不出来或不是合法的 JSON（{type(exc).__name__}）") from None
+    return parse_side_document(data)

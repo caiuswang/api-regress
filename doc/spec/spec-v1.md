@@ -100,7 +100,7 @@ api-regress demo     [--host HOST] [--port PORT] [--write-suites DIR]
 | `run` | 两侧 | 基线串行请求 2 次，候选请求 1 次，然后对比 | 各级别 finding 数、各请求状态数、报告路径 | 0 / 1 / 2 / 3 / 4 |
 | `record` | 只需要 baseline | 每条请求串行请求 2 次，**按请求合并**写入快照。失败的请求保留旧 sample；`--clean` 会先清空快照 | 写入数、未写入的请求及原因、**不稳定字段建议** | 0 / 2 / 3 / 4 |
 | `compare` | 只需要 candidate | 基线读快照，候选请求 1 次，然后对比 | 同 `run` | 0 / 1 / 2 / 3 / 4 |
-| `accept` | 无 | 把 run 目录里的候选响应**按请求合并**进快照，见 §8.3 | 接受数、被拒的请求及原因 | 0 / 3 / 4 |
+| `accept` | 无 | 把 run 目录里的候选响应**按请求合并**进快照，见 §8.3 | 接受数、被拒的请求及原因 | 0 / 2 / 3 / 4 |
 | `demo` | 无 | 启动本地演示服务，或用 `--write-suites` 写出示例 suite，见 §4.2 | 服务地址；写出的文件 | 0 / 2 / 3 |
 
 **退出码定义**
@@ -114,6 +114,8 @@ api-regress demo     [--host HOST] [--port PORT] [--write-suites DIR]
 | 4 | 至少有一条请求是 `error` 或 `inconclusive`（record / accept 指：至少有一条请求没写入），并且没有触发 1 |
 
 多个条件同时满足时，按 **2 > 3 > 1 > 4 > 0** 取值。单条请求出问题不会中断整个运行。warning 不影响退出码。
+
+`accept` 的 `--only` 写了 run 目录里不存在的 name 时，按命令行参数错误处理（退出码 2）（D20）。
 
 ### 4.2 demo 服务
 
@@ -456,6 +458,17 @@ snapshot/
 - **不保存请求头的值**，所以 token 和 Set-Cookie 不会落盘。
 - **写入是原子的**：写到一半中断，不会留下半份快照。
 
+**格式细则**（D20）
+- `manifest.json`：`schema_version`（当前 1）、`tool_version`、`fingerprint_version`、`updated_at`，以及 `requests`：每条请求的 `fingerprint`、`recorded_at`、`source`（`record` / `accept`）、sample 数。
+- `requests/<name>.json`：和 run 目录的 `baseline/<name>.json` 格式相同（§9）。record 写 1–2 个 sample：基线第 2 次请求失败、不是 JSON 或不满足 `success` 时只写第 1 个（同时给 `second_sample_unavailable`）；accept 写 1 个。
+- **版本**：`schema_version` 不是当前版本时按"快照 manifest 版本不兼容"处理（退出码 2）；`fingerprint_version` 不同时，所有请求都按指纹不一致处理。manifest 解析不了、manifest 列出的请求文件缺失，算快照损坏（退出码 3）。compare 读到解析不了的请求文件也算损坏；record / accept 只检查 manifest 和请求文件是否存在，没变的请求文件按字节原样复制，不解析（大快照上 `--only` 不必解析全部 body）。
+- **快照目录的保护**：`--snapshot` 指向已存在的非空目录时，必须是快照（含 `manifest.json`），否则拒绝写入（退出码 3），在发请求之前检查。`--clean` 只要求含 `manifest.json`，不读它的内容，所以损坏或版本不兼容的快照可以用 `--clean` 重录。
+- **原子替换**：先在同级目录写好完整的新快照（`.<name>.tmp-*`），再 `snap → snap.old`、新目录 → `snap`，最后删除 `snap.old`（新快照已就位后删除失败只给 WARNING 日志，不算写入失败）。record / accept 开始时处理上次中断的残留：`snap` 不存在而 `snap.old` 存在时恢复它，`snap` 存在时删除 `snap.old`；删除 `.<name>.tmp-*`。**compare 只读**：不删除、不改名任何东西；`snap` 不存在而 `snap.old` 存在时直接读 `snap.old`（给 WARNING），留给下次 record / accept 恢复。不支持多个命令同时写同一个快照。
+
+**各命令怎么用快照**（D20）
+- **record**：每条请求按 §7.2 的规则只对基线判定（两侧都看成基线）：`ok`、`unsupported` 写入；`error`、401/403/429、5xx、不满足 `success` 不写入，保留旧 sample。快照里有、suite 里没有（或不在 `--only` 里）的请求原样保留。`--clean` 时新快照只包含本次写入的请求。**一条都没写入时不改动快照，`--clean` 也一样**（基线不可用或 token 过期时，不能把好的快照清空）。
+- **compare**：快照目录不存在时当作空快照（每条请求都是"快照里没有这条请求"）。快照缺失或指纹不一致的请求照样请求候选，并写进 run 目录的 `candidate/`，所以随后可以 `accept`。快照里有 2 个 sample 时照常给不稳定字段建议。
+
 ### 8.2 请求指纹
 - **计算依据**：method、path 和 query 的**模板**（`${VAR}` 替换前）、请求头的**名称**。
 - **不参与计算**：target 级的 headers 和 base_url 都不算，所以 S1、S2 可以共用同一份 suite。
@@ -465,6 +478,15 @@ snapshot/
 - **来源与写入方式**：读取 run 目录里候选的响应和指纹，按请求合并进快照，可以用 `--only` 限定范围。快照不存在时会新建。
 - **可以接受**：状态为 `ok` 的请求，以及**只是因为指纹不一致或快照缺失**而变成 `inconclusive` 的请求。所以新增请求、改了 query 的请求，都可以直接 accept。
 - **会拒绝**：`error`、因为鉴权/限流/基线不可用/业务失败而 `inconclusive`、以及产生了 `business_error` 的请求。被拒的请求会在 stdout 里列出，退出码为 4。
+- **判定细则**（D20）：被接受的候选响应会成为新的基线，所以除了看请求状态，还按 record 的标准检查候选本身。按顺序，第一条匹配的生效：
+  1. 请求是 `error`：拒绝。
+  2. 请求是 `inconclusive`，但不是因为快照缺失或指纹不一致：拒绝。
+  3. run 目录里没有这条请求的候选响应，或候选是网络错误：拒绝。
+  4. 候选返回 401 / 403 / 429：拒绝（检查候选的 token 或限流）。
+  5. 候选返回 5xx：拒绝（不能作为基线）。
+  6. 候选不满足 `success`（包括产生了 `business_error`，以及快照缺失时候选不满足 `success`）：拒绝。
+  7. 其他（`ok`、`unsupported`、只因快照而 `inconclusive`）：接受。
+- **需要的信息**：accept 不读 suite，判定所需的信息都来自 run 目录：`result.json` 的每条请求记录 `snapshot_problem`（`missing` / `fingerprint_mismatch`，只有 compare 会填）和 `candidate_success`（候选的 success 结果，没有求值为 null；状态码不同时流程虽然就此结束，也照样对候选求值，只是出错时不给 warning）；候选响应和指纹来自 `candidate/<name>.json`。run 目录不是 api-regress 写的、解析不了，或请求名不符合 name 的写法（防止改过的文件让路径穿出目录）时退出码 3；快照 manifest 里的请求名同样检查，不合法算快照损坏。
 - **只有 1 个 sample**：被接受的请求只有 1 个 sample，见 §11 L4。
 
 ## 9. 输出
@@ -681,3 +703,4 @@ snapshot/
 | D17 | 实现 `run` 时补齐的细节：`unsupported` 仍比较状态码；"HEAD 或 204"的判定；响应头新出现记 suspicious，Content-Type 只改参数不报；URL 拼接与请求头合并顺序；`body_kind_changed` 的伪路径 `$body`；`--only` 未知 name 和非法覆盖地址按参数错误；run 目录格式与复用规则；取消；未命中规则的统计范围（§7.2、§6.2、§9） | 已确认（2026-11-11） |
 | D18 | `run` 的安全与健壮性（T4 code review 后补充）：`base_url` 不能带 userinfo；`timeout` 是单次请求的总时限；网络错误原因不带请求头的值；`--out` 先检查、只复用 api-regress 写的 run 目录、日志文件不算无关文件、写入失败时退出码和原因一致；取消对排队中的请求生效；单条请求的意外异常不中断运行、退出码 3（§7.2、§9） | 已确认（2026-11-11） |
 | D19 | 内置 `demo` 演示服务，方便不联网试用（用户提出，2026-11-11）。和非目标里的 Mock 的区别：数据固定、不可配置，只用于演示和自测（§2.3、§4.2） | 已确认（2026-11-11） |
+| D20 | 实现 T5 时补齐的快照细节：manifest 字段与版本处理、快照目录的保护与 `--clean`、原子替换的残留恢复；record 只对基线按 §7.2 判定，`unsupported` 也写入，第 2 个 sample 不可用时只写 1 个，一条都没写入时（含 `--clean`）不改动快照；compare 只读，不清理残留；compare 在快照缺失时仍请求候选并写 run 目录；accept 按 record 的标准检查候选（候选 5xx 也拒绝），判定信息来自 `result.json` 新增的 `snapshot_problem`、`candidate_success`；accept 的 `--only` 未知 name 退出码 2（§4.1、§8） | 待确认（2026-11-11） |

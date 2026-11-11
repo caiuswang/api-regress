@@ -14,7 +14,7 @@ import click
 from api_regress import __version__, demo as demo_pkg
 from api_regress.core import service
 from api_regress.core.config import format_where
-from api_regress.core.result import FailOn
+from api_regress.core.result import FailOn, RequestResult
 from api_regress.demo import server as demo_server
 
 log = logging.getLogger("api_regress")
@@ -97,7 +97,7 @@ def validate(suite: str) -> int:
     return report.exit_code
 
 
-def _print_issues(report: service.RunReport) -> None:
+def _print_issues(report: service.CommandReport) -> None:
     click.echo(f"INVALID, {len(report.errors)} error(s)")
     for issue in report.errors:
         click.echo(f"  {issue}")
@@ -120,29 +120,122 @@ def _print_run(report: service.RunReport) -> None:
     click.echo(f"result: {Path(report.out_dir) / 'result.json'}" if report.out_dir else "result: 未写入")
 
 
+def _finish(report: service.CommandReport, printer: Callable[[Any], None]) -> int:
+    """suite 或参数有问题时打印错误，否则打印摘要；最后一行总是退出码和原因。"""
+    if report.errors:
+        _print_issues(report)
+    else:
+        printer(report)
+    click.echo(f"exit {report.exit_code}: {report.exit_reason}")
+    return report.exit_code
+
+
+def _print_paired(report: service.RunReport) -> None:
+    if report.result is not None:
+        _print_run(report)
+
+
+def _log_file() -> Path | None:
+    log_file = click.get_current_context().params.get("log_file")
+    return Path(log_file) if log_file else None
+
+
+_SNAPSHOT = click.option(
+    "--snapshot", required=True, type=click.Path(file_okay=False, path_type=Path), help="快照目录"
+)
+_ONLY = click.option("--only", multiple=True, help="只处理指定的请求，可以重复")
+_OUT = click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="run 目录，默认 ./api-regress-out/<时间>/")
+_FAIL_ON = click.option("--fail-on", type=click.Choice(FAIL_ON), default="breaking", show_default=True)
+_SUITE = click.argument("suite", type=click.Path(dir_okay=False))
+
+
 @cli.command()
-@click.argument("suite", type=click.Path(dir_okay=False))
-@click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="run 目录，默认 ./api-regress-out/<时间>/")
-@click.option("--fail-on", type=click.Choice(FAIL_ON), default="breaking", show_default=True)
+@_SUITE
+@_OUT
+@_FAIL_ON
 @click.option("--baseline-url", help="覆盖 suite 里基线的 base_url")
 @click.option("--candidate-url", help="覆盖 suite 里候选的 base_url")
-@click.option("--only", multiple=True, help="只处理指定的请求，可以重复")
+@_ONLY
 @common_options
 def run(suite: str, out: Path | None, fail_on: str, baseline_url: str | None, candidate_url: str | None,
         only: tuple[str, ...]) -> int:  # fmt: skip
     """两侧都实时请求并对比：基线 2 次、候选 1 次。"""
-    log_file = click.get_current_context().params.get("log_file")
     options = service.RunOptions(
         out=out, fail_on=fail_on, baseline_url=baseline_url, candidate_url=candidate_url, only=list(only),
-        log_file=Path(log_file) if log_file else None,
+        log_file=_log_file(),
     )  # fmt: skip
-    report = service.run_sync(suite, options)
-    if report.errors:
-        _print_issues(report)
-    elif report.result is not None:
-        _print_run(report)
-    click.echo(f"exit {report.exit_code}: {report.exit_reason}")
-    return report.exit_code
+    return _finish(service.run_sync(suite, options), _print_paired)
+
+
+@cli.command()
+@_SUITE
+@_SNAPSHOT
+@_OUT
+@_FAIL_ON
+@click.option("--candidate-url", help="覆盖 suite 里候选的 base_url")
+@_ONLY
+@common_options
+def compare(suite: str, snapshot: Path, out: Path | None, fail_on: str, candidate_url: str | None,
+            only: tuple[str, ...]) -> int:  # fmt: skip
+    """基线读快照，候选实时请求 1 次并对比。只需要 candidate 的环境变量。"""
+    options = service.CompareOptions(
+        snapshot=snapshot, out=out, fail_on=fail_on, candidate_url=candidate_url, only=list(only), log_file=_log_file()
+    )
+    return _finish(service.compare_sync(suite, options), _print_paired)
+
+
+def _print_suggestions(requests: list[RequestResult]) -> None:
+    items = [(req.name, s) for req in requests for s in req.suggestions]
+    if not items:
+        return
+    click.echo(f"建议 ignore（{len(items)}）：")
+    for name, suggestion in items:
+        click.echo(f"  {name}: {suggestion.path}（{suggestion.reason}）")
+        click.echo("".join(f"    {line}\n" for line in suggestion.yaml.splitlines()), nl=False)
+
+
+def _print_record(report: service.RecordReport) -> None:
+    missing = report.not_written
+    click.echo(f"recorded {len(report.written)} | not recorded {len(missing)}")
+    for req in missing:
+        click.echo(f"  {req.name}: {req.status}（{req.reason}）")
+    warnings = [w for req in report.requests for w in req.warnings]
+    for w in warnings:
+        click.echo(f"  [{w.code}] {w.request}: {w.message}")
+    _print_suggestions(report.requests)
+    click.echo(f"snapshot: {report.snapshot}")
+
+
+@cli.command()
+@_SUITE
+@_SNAPSHOT
+@click.option("--clean", is_flag=True, help="先清空快照再录：新快照只包含本次写入的请求")
+@click.option("--baseline-url", help="覆盖 suite 里基线的 base_url")
+@_ONLY
+@common_options
+def record(suite: str, snapshot: Path, clean: bool, baseline_url: str | None, only: tuple[str, ...]) -> int:
+    """只请求基线（每条 2 次），按请求合并写入快照。只需要 baseline 的环境变量。"""
+    options = service.RecordOptions(snapshot=snapshot, clean=clean, baseline_url=baseline_url, only=list(only))
+    return _finish(service.record_sync(suite, options), _print_record)
+
+
+def _print_accept(report: service.AcceptReport) -> None:
+    click.echo(f"accepted {len(report.accepted)} | rejected {len(report.rejected)}")
+    for item in report.rejected:
+        click.echo(f"  {item.name}: 拒绝（{item.reason}）")
+    if report.snapshot is not None:
+        click.echo(f"snapshot: {report.snapshot}")
+
+
+@cli.command()
+@click.argument("run_dir", type=click.Path(file_okay=False, path_type=Path))
+@_SNAPSHOT
+@_ONLY
+@common_options
+def accept(run_dir: Path, snapshot: Path, only: tuple[str, ...]) -> int:
+    """把 run 目录里的候选响应按请求合并进快照（不存在时新建）。"""
+    report = service.accept_sync(run_dir, service.AcceptOptions(snapshot=snapshot, only=list(only)))
+    return _finish(report, _print_accept)
 
 
 def _serve_demo(host: str, port: int) -> int:

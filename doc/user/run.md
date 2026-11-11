@@ -5,7 +5,7 @@ api-regress run <suite.yaml> [--out DIR] [--fail-on LEVEL] [--baseline-url URL] 
                              [--only NAME ...] [--log-level LEVEL] [--log-file FILE]
 ```
 
-基线和候选都在线时用（例如预发和生产）。每条请求：**基线串行请求 2 次，候选请求 1 次**，用基线的第 1 次和候选对比，基线的第 2 次只用来找不稳定的字段。
+基线和候选都在线时用（例如预发和生产）。只有一个环境时，用 `record` 录快照、`compare` 和快照对比，见 [snapshot.md](snapshot.md)；`compare` 的流程、输出和退出码与本页相同。每条请求：**基线串行请求 2 次，候选请求 1 次**，用基线的第 1 次和候选对比，基线的第 2 次只用来找不稳定的字段。
 
 | 参数 | 说明 |
 |---|---|
@@ -42,11 +42,12 @@ api-regress run <suite.yaml> [--out DIR] [--fail-on LEVEL] [--baseline-url URL] 
 | # | 情况 | 状态 | 提示 |
 |---|---|---|---|
 | 1 | 任一侧网络错误或超时，重试后仍然失败 | `error` | 哪一侧失败、原因、重试次数 |
-| 2 | 任一侧返回 401 / 403 / 429 | `inconclusive` | 检查该侧的 token 或限流 |
-| 3 | 基线返回 5xx | `inconclusive` | 基线不可用 |
-| 4 | 配了 `success`，基线不满足 | `inconclusive` | 基线业务失败 |
-| 5 | 两侧都不是 JSON，而且不是 HEAD、也没有一侧是 204 | `unsupported` | 只比较状态码 |
-| 6 | 其他 | `ok` | |
+| 2 | （只有 `compare`）快照里没有这条请求，或者指纹不一致 | `inconclusive` | 请 record 或 accept，见 [snapshot.md](snapshot.md) |
+| 3 | 任一侧返回 401 / 403 / 429 | `inconclusive` | 检查该侧的 token 或限流 |
+| 4 | 基线返回 5xx | `inconclusive` | 基线不可用 |
+| 5 | 配了 `success`，基线不满足 | `inconclusive` | 基线业务失败 |
+| 6 | 两侧都不是 JSON，而且不是 HEAD、也没有一侧是 204 | `unsupported` | 只比较状态码 |
+| 7 | 其他 | `ok` | |
 
 - **候选 5xx、基线 2xx**：状态是 `ok`，报 `status_changed`（breaking）。
 - **两侧状态码相同但都不是 2xx，而且没配 `success`**：照常对比，同时给出 `both_non_2xx` 提示——测试数据可能已经失效（例如订单被删了，两边都 404）。
@@ -136,8 +137,8 @@ exit 1: 存在 1 条达到 breaking 级别的 finding
 | 文件 | 内容 |
 |---|---|
 | `result.json` | 结构化结果，字段见下文 |
-| `baseline/<name>.json` | 基线的 2 个 sample |
-| `candidate/<name>.json` | 候选的 1 个 sample |
+| `baseline/<name>.json` | 基线的 2 个 sample（`compare` 时是快照里的 1–2 个；快照里没有这条请求时不写） |
+| `candidate/<name>.json` | 候选的 1 个 sample，`accept` 从这里读 |
 
 每个 sample 记录 URL、状态码、`Content-Type` 和 `compare_headers` 列出的响应头、body 原文（不是 UTF-8 时存 base64，字段名 `body_b64`）、耗时、重试次数；网络错误的 sample 只有 URL、错误原因和重试次数。**请求头一律不保存**，所以 token 不会落盘；其他响应头（如 `Set-Cookie`）也不保存。但响应体原样保存，不要把 run 目录提交或上传到公开的地方。
 
@@ -149,8 +150,11 @@ exit 1: 存在 1 条达到 breaking 级别的 finding
 
 结构由仓库里的 JSON Schema（`schema/result.schema.json`）约束，主要字段：
 
-- 顶层：`schema_version`、`tool_version`、`command`、`suite`、`started_at`、`finished_at`、`fail_on`、`cancelled`、`exit_code`、`exit_reason`、`summary`（请求数、各状态数、各级别 finding 数、warning 数）、`requests`、`unmatched_rules`。
-- `requests[]`：`name`、`method`、`status`、`reason`、`fingerprint`、`baseline`（1–2 个 sample 的 URL、状态码、耗时、重试次数、Content-Type、错误）、`candidate`、`findings`、`warnings`、`suggestions`。
+- 顶层：`schema_version`、`tool_version`、`command`（`run` / `compare`）、`suite`、`started_at`、`finished_at`、`fail_on`、`cancelled`、`exit_code`、`exit_reason`、`summary`（请求数、各状态数、各级别 finding 数、warning 数）、`requests`、`unmatched_rules`。
+- `requests[]`：`name`、`method`、`status`、`reason`、`fingerprint`、`snapshot_problem`、`candidate_success`、`baseline`（0–2 个 sample 的 URL、状态码、耗时、重试次数、Content-Type、错误；`compare` 时快照里没有这条请求则为空）、`candidate`、`findings`、`warnings`、`suggestions`。
+  - `snapshot_problem`：只有 `compare` 会填，`missing`（快照里没有）或 `fingerprint_mismatch`（指纹不一致），其他情况为 `null`。
+  - `candidate_success`：候选的 `success` 结果（`true` / `false`），没有求值时（没配 `success`、HEAD、204、非 JSON、请求没走到这一步）为 `null`。状态码不同时流程虽然就此结束，也照样求值（出错时不给 `success_eval_error`）。
+  - 这两项给 `accept` 判断能不能接受候选响应。
 - `findings[]`：`finding_id`、`type`、`level`、`path`（具体路径或伪路径）、`generalized_path`（可以直接写进规则）、`path_tokens`、`base_value` / `cand_value`、`base_type` / `cand_type`、`example_index`、`rule_refs`、`message`。
   - 字段不存在时值为 `{"absent": true}`，和 `null` 区分；小数按原文的小数位输出成字符串（`12.50` → `"12.50"`），看 `base_type` / `cand_type` 区分数字和字符串。
   - `finding_id` 由请求名、类型和具体路径算出：同一个差异在两次运行中的 id 相同，keyed 数组里不同元素的 id 不同。

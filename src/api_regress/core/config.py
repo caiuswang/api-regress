@@ -22,7 +22,8 @@ log = logging.getLogger(__name__)
 
 READ_METHODS = frozenset({"GET", "HEAD"})
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-_NAME = re.compile(r"[A-Za-z0-9_.-]+")
+NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
+"""请求 name 的合法写法。快照和 run 目录按 name 命名文件，读回时也用它检查，防止路径穿越。"""
 
 
 # ---------- 数据模型 ----------
@@ -124,7 +125,7 @@ class Request(_Model):
     @field_validator("name")
     @classmethod
     def _check_name(cls, value: str) -> str:
-        if not _NAME.fullmatch(value):
+        if not NAME_PATTERN.fullmatch(value):
             raise ValueError(f"name {value!r} 只能包含 A-Z a-z 0-9 _ . -")
         return value
 

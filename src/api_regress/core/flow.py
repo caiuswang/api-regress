@@ -25,7 +25,7 @@ from api_regress.core.models import ABSENT, Finding, FindingType, Level, Side, S
 from api_regress.core.result import RequestResult, SampleInfo
 from api_regress.core.rules import RuleSet
 from api_regress.core.samples import CONTENT_TYPE, Sample
-from api_regress.core.status import Facts, judge
+from api_regress.core.status import Facts, RequestStatus, SnapshotProblem, judge
 
 log = logging.getLogger(__name__)
 
@@ -64,18 +64,26 @@ class Evaluation:
 
     result: RequestResult
     bodies: list[Any] = field(default_factory=list)
+    keep: list[Sample] = field(default_factory=list)
+    """record 时要写进快照的 sample。"""
 
 
 class _Flow:
-    def __init__(self, plan: Plan, base_samples: list[Sample], cand: Sample):
+    """cand 为 None 时（record）只看基线：self.cand 指向基线。"""
+
+    def __init__(self, plan: Plan, base_samples: list[Sample], cand: Sample | None):
         self.plan = plan
         self.method = plan.request.method
         self.base_samples = base_samples
         self.base = self._load(base_samples[0], "baseline")
-        self.cand = self._load(cand, "candidate")
+        self.cand = self.base if cand is None else self._load(cand, "candidate")
         self.findings: list[Finding] = []
         self.suggestions: list[Suggestion] = []
-        self.warnings: list[WarningItem] = [*self.base.body.warnings, *self.cand.body.warnings]
+        self.warnings: list[WarningItem] = list(self.base.body.warnings)
+        if cand is not None:
+            self.warnings += self.cand.body.warnings
+        self.cand_success: bool | None = None
+        self._cand_evaluated = False
 
     @property
     def body_less(self) -> bool:
@@ -102,13 +110,13 @@ class _Flow:
         """只对 JSON 响应求值；HEAD、204、非 JSON 跳过。"""
         return self.plan.success is not None and self.method != "HEAD" and loaded.sample.status != 204 and loaded.is_json
 
-    def success(self, loaded: Loaded, side: Side) -> bool | None:
-        """没有求值时返回 None；求值出错视为不满足，并产生 success_eval_error。"""
+    def success(self, loaded: Loaded, side: Side, warn: bool = True) -> bool | None:
+        """没有求值时返回 None；求值出错视为不满足，并产生 success_eval_error（warn 为假时不产生）。"""
         if not self._success_applies(loaded):
             return None
         assert self.plan.success is not None and loaded.sample.status is not None
         outcome = expr.eval_success(self.plan.success, loaded.sample.status, loaded.sample.headers, loaded.body.value)
-        if outcome.error is not None:
+        if outcome.error is not None and warn:
             self.warn("success_eval_error", f"{_SIDE_NAME[side]}的 success 求值出错，视为不满足：{outcome.error}")
         return outcome.passed
 
@@ -125,8 +133,15 @@ class _Flow:
         if self.plan.success is None and not 200 <= status < 300:
             self.warn("both_non_2xx", f"两侧都返回 {status}，都没有成功，测试数据可能已失效")
 
+    def candidate_success(self, warn: bool = True) -> bool | None:
+        """候选的 success 只求值一次（出错的 warning 只给一条）。accept 靠它判断候选能不能当基线。"""
+        if not self._cand_evaluated:
+            self._cand_evaluated = True
+            self.cand_success = None if self.cand.sample.failed else self.success(self.cand, "candidate", warn)
+        return self.cand_success
+
     def business_error(self) -> bool:
-        if self.success(self.cand, "candidate") is not False:
+        if self.candidate_success() is not False:
             return False
         self.report("business_error", "breaking", "$success", True, False, "基线满足 success，候选不满足")
         return True
@@ -204,9 +219,13 @@ def _second_problem(second: Loaded, first_is_json: bool) -> str | None:
     return None
 
 
-def _compare(flow: _Flow, status: str) -> list[Any]:
+def _compare(flow: _Flow, status: RequestStatus) -> list[Any]:
     """ok 之后的步骤。返回参与「本次未命中的规则」检测的 body。"""
-    if flow.status_changed() or status != "ok":
+    if flow.status_changed():
+        # 流程就此结束，不报 success 相关的 warning；但 accept 仍要知道候选满不满足 success
+        flow.candidate_success(warn=False)
+        return []
+    if status != "ok":
         return []
     flow.both_non_2xx()
     business = flow.business_error()
@@ -225,11 +244,35 @@ def _suggest(flow: _Flow, second: Loaded) -> list[Any]:
     return [second.body.value]
 
 
-def evaluate(plan: Plan, base_samples: list[Sample], cand: Sample, snapshot_problem: str | None = None) -> Evaluation:
-    """base_samples 有 1 到 2 个，只有第 1 个和候选对比，第 2 个只用来计算不稳定字段建议。"""
-    flow = _Flow(plan, base_samples, cand)
+# 快照里没有这条请求时，基线用这个占位：status.judge 的「快照问题」排在网络错误之后、其他规则之前，
+# 有 snapshot_problem 时占位 sample 不会影响判定（它既不失败，也不会走到 401/5xx/success 那几条）。
+_NO_BASELINE = Sample(url="", status=200)
+
+
+def _result(flow: _Flow, status: RequestStatus, reason: str | None, base_samples: list[Sample], cand: Sample | None) -> RequestResult:
+    return RequestResult(
+        name=flow.plan.name,
+        method=flow.method,
+        status=status,
+        reason=reason,
+        fingerprint=flow.plan.fingerprint,
+        baseline=[SampleInfo.of(s) for s in base_samples],
+        candidate=None if cand is None else SampleInfo.of(cand),
+        findings=flow.findings,
+        warnings=flow.warnings,
+        suggestions=flow.suggestions,
+        candidate_success=flow.cand_success,
+    )
+
+
+def _log(flow: _Flow, status: RequestStatus, reason: str | None) -> None:
+    log.info("%s：%s，%d 条 finding，%d 条 warning%s", flow.plan.name, status, len(flow.findings), len(flow.warnings),
+             f"（{reason}）" if reason else "")  # fmt: skip
+
+
+def _facts(flow: _Flow, cand: Sample, snapshot_problem: SnapshotProblem | None) -> Facts:
     base_success = None if flow.base.sample.failed or cand.failed else flow.success(flow.base, "baseline")
-    facts = Facts(
+    return Facts(
         method=flow.method,
         base=flow.base.sample,
         cand=cand,
@@ -238,23 +281,46 @@ def evaluate(plan: Plan, base_samples: list[Sample], cand: Sample, snapshot_prob
         base_success=base_success,
         snapshot_problem=snapshot_problem,
     )
-    status, reason = judge(facts)
+
+
+def evaluate(
+    plan: Plan, base_samples: list[Sample], cand: Sample, snapshot_problem: SnapshotProblem | None = None
+) -> Evaluation:
+    """base_samples 有 1 到 2 个，只有第 1 个和候选对比，第 2 个只用来计算不稳定字段建议。
+
+    compare 时 base_samples 来自快照：快照里没有这条请求时为空，这时必须给出 snapshot_problem。"""
+    assert base_samples or snapshot_problem is not None
+    flow = _Flow(plan, base_samples or [_NO_BASELINE], cand)
+    status, reason = judge(_facts(flow, cand, snapshot_problem))
     extra = _compare(flow, status) if status in ("ok", "unsupported") else []
+    if status == "inconclusive" and snapshot_problem is not None:
+        flow.candidate_success()  # accept 要据此判断能不能接受候选
     for finding in flow.findings:
         finding.finding_id = finding_id(plan.name, finding.type, finding.path)
-    result = RequestResult(
-        name=plan.name,
-        method=flow.method,
-        status=status,
-        reason=reason,
-        fingerprint=plan.fingerprint,
-        baseline=[SampleInfo.of(s) for s in base_samples],
-        candidate=SampleInfo.of(cand),
-        findings=flow.findings,
-        warnings=flow.warnings,
-        suggestions=flow.suggestions,
-    )
-    log.info("%s：%s，%d 条 finding，%d 条 warning%s", plan.name, status, len(flow.findings), len(flow.warnings),
-             f"（{reason}）" if reason else "")  # fmt: skip
+    result = _result(flow, status, reason, base_samples, cand)
+    result.snapshot_problem = snapshot_problem
+    _log(flow, status, reason)
     bodies = [x.body.value for x in (flow.base, flow.cand) if x.is_json] + extra
     return Evaluation(result=result, bodies=bodies)
+
+
+def evaluate_baseline(plan: Plan, base_samples: list[Sample]) -> Evaluation:
+    """record 用：只有基线。按请求状态的规则只对基线判定（两侧都看成基线），ok / unsupported 才写入快照。
+
+    写入的 sample 放在 Evaluation.keep：第 2 个不可用（失败、不是 JSON、不满足 success）时只留第 1 个。"""
+    flow = _Flow(plan, base_samples, None)
+    first = flow.base
+    base_success = None if first.sample.failed else flow.success(first, "baseline")
+    facts = Facts(
+        method=flow.method, base=first.sample, cand=first.sample, base_json=first.is_json, cand_json=first.is_json,
+        base_success=base_success,
+    )  # fmt: skip
+    status, reason = judge(facts)
+    keep: list[Sample] = []
+    if status in ("ok", "unsupported"):
+        second = flow.second_sample()
+        keep = [first.sample] + ([second.sample] if second is not None else [])
+        if second is not None and second.is_json and first.is_json:
+            _suggest(flow, second)
+    _log(flow, status, reason)
+    return Evaluation(result=_result(flow, status, reason, base_samples, None), keep=keep)

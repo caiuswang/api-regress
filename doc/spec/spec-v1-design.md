@@ -21,7 +21,7 @@ flowchart LR
 
 - `core` 是纯库，输入和输出都用 pydantic v2 模型。
 - 用 import-linter 的 `forbidden` 契约禁止 `core` 引用 `cli` 和 `report`，CI 里执行 `lint-imports`。已实测：违规时退出码为 1。
-- `core.service` 对外提供 async API：`validate_suite`、`run`、`record`、`compare`、`accept`，另外提供同步包装。`validate_suite`、`run` 已实现（进度事件、`cancel_event` 见 [doc/dev/architecture.md](../dev/architecture.md) 的「run 主流程」）。
+- `core.service` 对外提供 async API：`validate_suite`、`run`、`record`、`compare`、`accept`，另外提供同步包装。全部已实现（进度事件、`cancel_event` 见 [doc/dev/architecture.md](../dev/architecture.md) 的「run 主流程」，快照命令见「record / compare / accept」）。
 
 ### 1.1 建议的模块划分
 
@@ -40,7 +40,7 @@ flowchart LR
 | `core/diff/arrays.py` | 4 种数组模式，用分发表选择 |
 | `core/diff/schema.py` | 扁平表：泛化路径 → 类型集合和小数位集合 |
 | `core/diff/unstable.py` | 不稳定字段建议 |
-| `core/snapshot.py` | 读写快照、计算指纹、原子替换 |
+| `core/snapshot.py` | 读写快照、原子替换（已实现；指纹在 `core/samples.py`，执行器拆到 `core/executor.py`，accept 判定在 `core/accept.py`） |
 | `core/service.py` | 编排各命令 |
 | `report/{html,md,junit,jsonout}.py` | 各种报告的渲染 |
 | `cli.py` | 命令行入口 |
@@ -73,11 +73,8 @@ flowchart LR
 ## 5. 运行与 IO
 
 - **请求、重试**：已在 T4 落地，迁到 doc/dev 的「run 主流程」。
-- **快照原子写入**：
-  - 不能直接用 `os.replace` 覆盖已有的非空目录，会报 `ENOTEMPTY`（已实测）。
-  - 正确做法：在同级目录写好临时目录，然后执行 `snap → snap.old`、`tmp → snap`，最后删除 `.old`。
-  - 程序启动时清理残留的 `.old`。
-- **指纹、body 存储**：计算和 sample 落盘格式已在 T4 落地（`core/samples.py`，run 目录在用），见 doc/dev。快照的 manifest 里写 `fingerprint_version`，留给 T5。
+- **快照原子写入、残留恢复、manifest**：已在 T5 落地，迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「快照」一节。
+- **指纹、body 存储**：已落地（`core/samples.py`，run 目录和快照共用），见 doc/dev。
 - **HTML 报告**：
   - Jinja2 开启 `autoescape`。
   - 两侧对照用 `difflib.HtmlDiff(context=True)` 生成，已实测它会转义 `<script>`。body 过大时截断，不引入 JS 库。

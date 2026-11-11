@@ -183,7 +183,7 @@
       "type": "object"
     },
     "RequestResult": {
-      "description": "一条请求的结果。`baseline` 有 1 到 2 个 sample，只有第 1 个参与对比。",
+      "description": "一条请求的结果。`baseline` 有 0 到 2 个 sample（快照里没有这条请求时为空），只有第 1 个参与对比。\n\n`snapshot_problem`：compare 时快照缺失或指纹不一致。`candidate_success`：候选的 success 结果，没有求值为 None。\n这两项给 accept 判断能不能接受候选响应。",
       "properties": {
         "baseline": {
           "default": [],
@@ -203,6 +203,18 @@
             }
           ],
           "default": null
+        },
+        "candidate_success": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Success"
         },
         "findings": {
           "default": [],
@@ -235,6 +247,22 @@
           ],
           "default": null,
           "title": "Reason"
+        },
+        "snapshot_problem": {
+          "anyOf": [
+            {
+              "enum": [
+                "missing",
+                "fingerprint_mismatch"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snapshot Problem"
         },
         "status": {
           "enum": [

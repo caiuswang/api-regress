@@ -75,6 +75,17 @@ DEMO_URL=http://127.0.0.1:9000 api-regress run demo/regress.yaml
 
 两个 suite 都可以直接改：加请求、改规则，观察结果怎么变。字段含义见 [suite.md](suite.md)，结果怎么看见 [run.md](run.md)。
 
+### 试快照流程
+
+`regress.yaml` 也能演示"只有一个环境"的流程（见 [snapshot.md](snapshot.md)）：`record` 只请求基线（`/v1`），`compare` 只请求候选（`/v2`）。
+
+```bash
+api-regress record  demo/regress.yaml --snapshot snap/                  # 7 条都写入，退出码 0
+api-regress compare demo/regress.yaml --snapshot snap/ --out out/       # 和 run 一样报出上表的 finding，退出码 1
+api-regress accept  out/ --snapshot snap/                               # inventory（business_error）、daily-report（500）被拒，退出码 4
+api-regress compare demo/regress.yaml --snapshot snap/ --out out/       # 只剩这两条的 finding
+```
+
 ## 常见问题
 
 - **`curl` 访问 demo 拿到的不是 JSON**：开了 `HTTP_PROXY` 等代理变量时，curl 可能把本机请求也发给代理。用 `curl --noproxy '*' http://127.0.0.1:18765/v1/health`。

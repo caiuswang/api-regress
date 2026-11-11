@@ -12,7 +12,13 @@ from api_regress.core.samples import Sample
 RequestStatus = Literal["ok", "error", "inconclusive", "unsupported"]
 REQUEST_STATUSES: tuple[RequestStatus, ...] = ("ok", "error", "inconclusive", "unsupported")
 
-_AUTH_OR_LIMIT = frozenset({401, 403, 429})
+SnapshotProblem = Literal["missing", "fingerprint_mismatch"]
+SNAPSHOT_PROBLEM_TEXT: dict[SnapshotProblem, str] = {
+    "missing": "快照里没有这条请求",
+    "fingerprint_mismatch": "快照里这条请求的指纹不一致（method、path、query 或请求头名字变了）",
+}
+
+AUTH_OR_LIMIT = frozenset({401, 403, 429})
 _SIDE_NAME = {"baseline": "基线", "candidate": "候选"}
 
 
@@ -26,7 +32,7 @@ class Facts:
     base_json: bool = False
     cand_json: bool = False
     base_success: bool | None = None
-    snapshot_problem: str | None = None
+    snapshot_problem: SnapshotProblem | None = None
 
     def sides(self) -> tuple[tuple[Side, Sample], ...]:
         return (("baseline", self.base), ("candidate", self.cand))
@@ -46,7 +52,7 @@ def _failed(f: Facts) -> tuple[Side, Sample] | None:
 
 
 def _auth(f: Facts) -> tuple[Side, Sample] | None:
-    return _first(f, lambda s: s.status in _AUTH_OR_LIMIT)
+    return _first(f, lambda s: s.status in AUTH_OR_LIMIT)
 
 
 def _error_hint(f: Facts) -> str:
@@ -63,11 +69,16 @@ def _auth_hint(f: Facts) -> str:
     return f"{_SIDE_NAME[side]}返回 {sample.status}，检查{_SIDE_NAME[side]}的 token 或限流"
 
 
+def _snapshot_hint(f: Facts) -> str:
+    assert f.snapshot_problem is not None
+    return f"{SNAPSHOT_PROBLEM_TEXT[f.snapshot_problem]}，请 record 或 accept"
+
+
 Rule = tuple[Callable[[Facts], bool], RequestStatus, Callable[[Facts], str | None]]
 
 STATUS_RULES: tuple[Rule, ...] = (
     (lambda f: _failed(f) is not None, "error", _error_hint),
-    (lambda f: f.snapshot_problem is not None, "inconclusive", lambda f: f"{f.snapshot_problem}，请 record 或 accept"),
+    (lambda f: f.snapshot_problem is not None, "inconclusive", _snapshot_hint),
     (lambda f: _auth(f) is not None, "inconclusive", _auth_hint),
     (lambda f: (f.base.status or 0) >= 500, "inconclusive", lambda f: f"基线返回 {f.base.status}，基线不可用"),
     (lambda f: f.base_success is False, "inconclusive", lambda f: "基线不满足 success，基线业务失败"),

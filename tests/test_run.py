@@ -12,7 +12,7 @@ import httpx
 import pytest
 import yaml
 
-from api_regress.core import service
+from api_regress.core import executor, service
 from api_regress.core.result import EXIT_RULES, ExitState, exit_code
 from api_regress.core.service import RunOptions
 from tests.mock_api import BASE, CAND, JSON, Reply, Server, j, only, req, run, suite_text, types
@@ -421,14 +421,14 @@ def test_default_out_dir(tmp_path, monkeypatch):
 
 def test_one_request_crash_does_not_abort_run(tmp_path, monkeypatch):
     """单条请求处理时抛了意外的异常：这条记为 error，其他照常，result.json 照常写，退出码 3。"""
-    real = service.evaluate
+    real = executor.evaluate
 
     def flaky(plan, *args, **kwargs):
         if plan.name == "a":
             raise OverflowError("boom")
         return real(plan, *args, **kwargs)
 
-    monkeypatch.setattr(service, "evaluate", flaky)
+    monkeypatch.setattr(executor, "evaluate", flaky)
     report = run(tmp_path, suite_text(req("a") + req("b")), Server().both("/x", j({})))
     assert report.exit_code == 3
     assert only(report, "a").status == "error" and "OverflowError" in only(report, "a").reason

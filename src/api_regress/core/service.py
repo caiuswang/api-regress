@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, TypeVar
 
 import httpx
 from pydantic import BaseModel
 
 from api_regress import __version__
-from api_regress.core import expr, rundir
+from api_regress.core import accept as acceptance, expr, rundir, snapshot
 from api_regress.core.config import (
     ConfigError,
     ConfigIssue,
@@ -26,8 +25,19 @@ from api_regress.core.config import (
     base_url_problem,
     load_suite,
 )
-from api_regress.core.flow import Plan, evaluate
-from api_regress.core.models import SIDES, WarningItem
+from api_regress.core.executor import (
+    CancelToken,
+    Executed,
+    Executor,
+    Mode,
+    OnEvent,
+    ProgressEvent,
+    RequestDone,
+    RequestStarted,
+    Targets,
+)
+from api_regress.core.flow import Plan
+from api_regress.core.models import SIDES, Side, WarningItem
 from api_regress.core.result import (
     ExitState,
     FailOn,
@@ -38,12 +48,19 @@ from api_regress.core.result import (
     exit_code,
     run_exit_state,
 )
-from api_regress.core.rules import CompiledRule, RuleSet, static_warnings, unmatched_rules
-from api_regress.core.runner import Call, Runner, make_call, new_client
-from api_regress.core.samples import Sample, fingerprint
-from api_regress.core.status import RequestStatus
+from api_regress.core.rules import RuleSet, static_warnings
+from api_regress.core.samples import SampleFormatError, fingerprint
+
+__all__ = [
+    "AcceptOptions", "AcceptReport", "CancelToken", "CompareOptions", "OnEvent", "ProgressEvent", "RecordOptions",
+    "RecordReport", "Rejected", "RequestDone", "RequestStarted", "RunOptions", "RunReport", "ValidationReport",
+    "accept", "accept_sync", "compare", "compare_sync", "record", "record_sync", "run", "run_sync",
+    "validate_suite", "validate_suite_sync",
+]  # fmt: skip
 
 log = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 _SIDE_LABEL = {"baseline": "baseline", "candidate": "candidate", "shared": "baseline 和 candidate"}
 
@@ -105,67 +122,96 @@ async def validate_suite(path: str | Path, env: Mapping[str, str] | None = None)
     return await asyncio.to_thread(validate_suite_sync, path, env)
 
 
-# ---------- run ----------
+# ---------- 共用 ----------
 
 
-class RunOptions(BaseModel):
-    out: Path | None = None
-    fail_on: FailOn = "breaking"
-    baseline_url: str | None = None
-    candidate_url: str | None = None
-    only: list[str] = []
-    log_file: Path | None = None
-    """日志文件。放在 run 目录里时不算作无关文件。"""
-
-
-class RequestStarted(BaseModel):
-    event: Literal["request_started"] = "request_started"
-    name: str
-
-
-class RequestDone(BaseModel):
-    event: Literal["request_done"] = "request_done"
-    name: str
-    status: RequestStatus
-    findings: int
-
-
-ProgressEvent = RequestStarted | RequestDone
-OnEvent = Callable[[ProgressEvent], None]
-
-
-class CancelToken(Protocol):
-    """threading.Event 或 asyncio.Event 都可以。已经开始的请求会跑完，还没开始的记为 error。"""
-
-    def is_set(self) -> bool: ...
-
-
-class RunReport(BaseModel):
-    """一次 run 的返回值。suite 有问题时 result 为 None，errors 列出问题。"""
+class CommandReport(BaseModel):
+    """各命令返回值的公共部分。suite 或参数有问题时 errors 列出问题。"""
 
     source: str
     exit_code: int
     exit_reason: str
     errors: list[ConfigIssue] = []
-    result: RunResult | None = None
-    out_dir: str | None = None
+
+
+class _Stop(Exception):
+    """提前结束一个命令：带着已经算好的返回值。"""
+
+    def __init__(self, report: CommandReport):
+        self.report = report
+
+
+def _now() -> datetime:
+    return datetime.now().astimezone()
 
 
 def _usage_issue(source: str, location: str, message: str) -> ConfigIssue:
     return ConfigIssue(source=source, location=location, message=message)
 
 
-def _check_options(source: str, suite_names: list[str], options: RunOptions) -> list[ConfigIssue]:
-    issues = [
-        _usage_issue(source, "--only", f"suite 里没有名为 {name!r} 的请求")
-        for name in options.only
-        if name not in suite_names
-    ]
-    for flag, url in (("--baseline-url", options.baseline_url), ("--candidate-url", options.candidate_url)):
+def _finish_log(command: str, code: int, reason: str) -> None:
+    log.info("%s 结束：退出码 %d（%s）", command, code, reason)
+
+
+def _suite_error(command: str, source: str, issues: list[ConfigIssue], report: type[CommandReport]) -> _Stop:
+    code, reason = exit_code(ExitState(suite_error=True))
+    for issue in issues:
+        log.error("%s", issue)
+    _finish_log(command, code, f"{reason}，{len(issues)} 个错误")
+    return _Stop(report(source=source, exit_code=code, exit_reason=reason, errors=issues))
+
+
+def _version_error(command: str, source: str, exc: Exception, report: type[CommandReport]) -> _Stop:
+    return _suite_error(command, source, [_usage_issue(source, "--snapshot", str(exc))], report)
+
+
+def _internal_error(command: str, source: str, detail: str, report: type[CommandReport]) -> _Stop:
+    code, reason = exit_code(ExitState(internal_error=True))
+    reason = f"{reason}：{detail}"
+    log.error("%s", detail)
+    _finish_log(command, code, reason)
+    return _Stop(report(source=source, exit_code=code, exit_reason=reason))
+
+
+async def _load(command: str, path: str | Path, sides: Collection[Side], env: Mapping[str, str] | None,
+                report: type[CommandReport]) -> LoadedSuite:  # fmt: skip
+    try:
+        return await asyncio.to_thread(load_suite, path, sides, env)
+    except ConfigError as exc:
+        raise _suite_error(command, str(path), exc.issues, report) from None
+
+
+def _check_usage(command: str, source: str, names: list[str], only: list[str], overrides: dict[str, str | None],
+                 report: type[CommandReport]) -> None:  # fmt: skip
+    """--only 的 name 必须存在；覆盖地址必须合法。"""
+    issues = [_usage_issue(source, "--only", f"没有名为 {name!r} 的请求") for name in only if name not in names]
+    for flag, url in overrides.items():
         problem = None if url is None else base_url_problem(url)
         if problem:
             issues.append(_usage_issue(source, flag, problem))
-    return issues
+    if issues:
+        raise _suite_error(command, source, issues, report)
+
+
+def _snapshot_step(command: str, source: str, report: type[CommandReport], step: Callable[[], T]) -> T:
+    """执行一步快照操作，把异常换成退出码：版本不兼容 2，其他（损坏、不能用、IO 错误）3。"""
+    try:
+        return step()
+    except snapshot.SnapshotVersionError as exc:
+        raise _version_error(command, source, exc, report) from None
+    except OSError as exc:
+        raise _internal_error(command, source, str(exc), report) from None
+
+
+def _open_snapshot(command: str, source: str, root: Path, clean: bool, report: type[CommandReport]
+                   ) -> tuple[Path, snapshot.Manifest | None]:  # fmt: skip
+    """record / accept：处理残留，检查快照能不能写；返回规范化的路径和现有 manifest。"""
+
+    def step() -> tuple[Path, snapshot.Manifest | None]:
+        normalized = snapshot.recover(root)
+        return normalized, snapshot.check_writable(normalized, clean)
+
+    return _snapshot_step(command, source, report, step)
 
 
 def _compile_optional(source: str | None) -> expr.CompiledExpr | None:
@@ -188,88 +234,37 @@ def _plans(loaded: LoadedSuite, only: list[str]) -> list[Plan]:
     ]
 
 
-@dataclass
-class _Executed:
-    """一条请求跑完的结果。missed 是本条请求里没命中的规则，None 表示不参与统计（没有 JSON body）。"""
-
-    plan: Plan
-    result: RequestResult
-    base_samples: list[Sample]
-    cand: Sample | None = None
-    missed: list[CompiledRule] | None = None
-    cancelled: bool = False
-    internal_error: bool = False
+def _internal(executor: Executor, executed: list[Executed]) -> bool:
+    return executor.callback_errors > 0 or any(item.internal_error for item in executed)
 
 
-class _Executor:
-    def __init__(self, suite: Suite, options: RunOptions, on_event: OnEvent | None, cancel: CancelToken | None):
-        self.suite = suite
-        self.options = options
-        self.on_event = on_event or (lambda event: None)
-        self.cancel = cancel
-        self.callback_errors = 0
-
-    async def run_all(self, plans: list[Plan], transport: httpx.AsyncBaseTransport | None) -> list[_Executed]:
-        defaults = self.suite.defaults
-        # 同时在跑的请求数受 gate 限制：拿到名额后才检查取消、发 RequestStarted，取消才能对排队的请求生效
-        gate = asyncio.Semaphore(defaults.concurrency)
-        async with new_client(defaults.timeout, transport) as client:
-            runner = Runner(client, defaults.concurrency, defaults.retries, defaults.timeout)
-            return list(await asyncio.gather(*(self._one(gate, runner, plan) for plan in plans)))
-
-    def _emit(self, event: ProgressEvent) -> None:
-        """回调出错不能中断运行；记为工具自身出错（退出码 3）。"""
-        try:
-            self.on_event(event)
-        except Exception as exc:
-            self.callback_errors += 1
-            log.error("进度回调出错：%s\n%s", type(exc).__name__, "".join(traceback.format_tb(exc.__traceback__)))
-
-    async def _baseline(self, runner: Runner, call: Call) -> list[Sample]:
-        """基线串行请求 2 次；第 1 次失败就不再请求第 2 次。"""
-        first = await runner.fetch(call)
-        return [first] if first.failed else [first, await runner.fetch(call)]
-
-    async def _one(self, gate: asyncio.Semaphore, runner: Runner, plan: Plan) -> _Executed:
-        async with gate:
-            if self.cancel is not None and self.cancel.is_set():
-                return _cancelled(plan)
-            self._emit(RequestStarted(name=plan.name))
-            try:
-                item = await self._execute(runner, plan)
-            except Exception as exc:  # 单条请求出错不影响其他请求
-                item = _crashed(plan, exc)
-            self._emit(RequestDone(name=plan.name, status=item.result.status, findings=len(item.result.findings)))
-            return item
-
-    async def _execute(self, runner: Runner, plan: Plan) -> _Executed:
-        base_call = make_call(self.suite, plan.request, "baseline", self.options.baseline_url)
-        cand_call = make_call(self.suite, plan.request, "candidate", self.options.candidate_url)
-        base_samples, cand = await asyncio.gather(self._baseline(runner, base_call), runner.fetch(cand_call))
-        evaluation = evaluate(plan, base_samples, cand)
-        missed = unmatched_rules(plan.rules.rules, evaluation.bodies) if evaluation.bodies else None
-        return _Executed(plan, evaluation.result, base_samples, cand, missed)
+# ---------- run / compare ----------
 
 
-def _error_result(plan: Plan, reason: str) -> RequestResult:
-    return RequestResult(
-        name=plan.name, method=plan.request.method, status="error", reason=reason, fingerprint=plan.fingerprint
-    )
+class RunOptions(BaseModel):
+    out: Path | None = None
+    fail_on: FailOn = "breaking"
+    baseline_url: str | None = None
+    candidate_url: str | None = None
+    only: list[str] = []
+    log_file: Path | None = None
+    """日志文件。放在 run 目录里时不算作无关文件。"""
 
 
-def _cancelled(plan: Plan) -> _Executed:
-    log.info("%s：error（运行已取消）", plan.name)
-    return _Executed(plan, _error_result(plan, "运行已取消，没有发出请求"), [], cancelled=True)
+class CompareOptions(RunOptions):
+    """compare：基线读快照，baseline_url 不生效。"""
+
+    snapshot: Path
 
 
-def _crashed(plan: Plan, exc: Exception) -> _Executed:
-    """只记异常类型和调用栈，不记异常消息：消息里可能带着请求的内容。"""
-    name = type(exc).__name__
-    log.error("%s：内部错误 %s\n%s", plan.name, name, "".join(traceback.format_tb(exc.__traceback__)))
-    return _Executed(plan, _error_result(plan, f"工具内部错误（{name}），详见日志"), [], internal_error=True)
+class RunReport(CommandReport):
+    """run / compare 的返回值。suite 有问题时 result 为 None。"""
+
+    result: RunResult | None = None
+    out_dir: str | None = None
 
 
-def _unmatched(suite: Suite, executed: list[_Executed]) -> list[UnmatchedRule]:
+def _unmatched(suite: Suite, executed: list[Executed]) -> list[UnmatchedRule]:
     """defaults 的规则在所有请求里都没命中才算；只统计至少有一侧是 JSON body 的请求。"""
     defaults_missed: set[int] | None = None
     out: list[UnmatchedRule] = []
@@ -289,7 +284,7 @@ def _unmatched(suite: Suite, executed: list[_Executed]) -> list[UnmatchedRule]:
     return head + out
 
 
-def _write_run_dir(out: Path, executed: list[_Executed], result: RunResult, ignore: list[Path]) -> None:
+def _write_run_dir(out: Path, executed: list[Executed], result: RunResult, ignore: list[Path]) -> None:
     rundir.prepare(out, ignore)
     for item in executed:
         name, fp, keep = item.plan.name, item.plan.fingerprint, item.plan.request.compare_headers
@@ -308,15 +303,16 @@ def _log_summary(result: RunResult) -> None:
     )  # fmt: skip
 
 
-def _finish(
-    source: str, options: RunOptions, out: Path, executed: list[_Executed], started: datetime, suite: Suite,
-    callback_errors: int,
-) -> RunReport:  # fmt: skip
+def _ignored(options: RunOptions) -> list[Path]:
+    return [options.log_file] if options.log_file else []
+
+
+def _finish(command: Mode, source: str, options: RunOptions, out: Path, executed: list[Executed], started: datetime,
+            suite: Suite, internal: bool) -> RunReport:  # fmt: skip
     requests = [item.result for item in executed]
-    internal = callback_errors > 0 or any(item.internal_error for item in executed)
     code, reason = exit_code(replace(run_exit_state(requests, options.fail_on), internal_error=internal))
     result = RunResult(
-        tool_version=__version__, command="run", suite=source, started_at=started, finished_at=_now(),
+        tool_version=__version__, command=command, suite=source, started_at=started, finished_at=_now(),
         fail_on=options.fail_on, cancelled=any(item.cancelled for item in executed), exit_code=code,
         exit_reason=reason, summary=Summary.of(requests), requests=requests,
         unmatched_rules=_unmatched(suite, executed),
@@ -325,35 +321,45 @@ def _finish(
     try:
         _write_run_dir(out, executed, result, _ignored(options))
     except OSError as exc:
-        log.error("无法写入 run 目录 %s：%s", out, exc)
-        report = _internal_error(source, f"无法写入 run 目录 {out}（{exc}）")
+        report = _internal_error(command, source, f"无法写入 run 目录 {out}（{exc}）", RunReport).report
+        assert isinstance(report, RunReport)
         report.result = result.model_copy(update={"exit_code": report.exit_code, "exit_reason": report.exit_reason})
         return report
-    log.info("run 结束：退出码 %d（%s）", code, reason)
+    _finish_log(command, code, reason)
     return RunReport(source=source, exit_code=code, exit_reason=reason, result=result, out_dir=str(out))
 
 
-def _now() -> datetime:
-    return datetime.now().astimezone()
+def _compare_snapshot(source: str, options: CompareOptions, names: list[str]) -> snapshot.Snapshot:
+    """compare：只读地加载快照。"""
+    return _snapshot_step(
+        "compare", source, RunReport, lambda: snapshot.load(snapshot.readable(options.snapshot), names)
+    )
 
 
-def _ignored(options: RunOptions) -> list[Path]:
-    return [options.log_file] if options.log_file else []
-
-
-def _internal_error(source: str, detail: str) -> RunReport:
-    code, reason = exit_code(ExitState(internal_error=True))
-    reason = f"{reason}：{detail}"
-    log.info("run 结束：退出码 %d（%s）", code, reason)
-    return RunReport(source=source, exit_code=code, exit_reason=reason)
-
-
-def _suite_error(source: str, issues: list[ConfigIssue]) -> RunReport:
-    code, reason = exit_code(ExitState(suite_error=True))
-    for issue in issues:
-        log.error("%s", issue)
-    log.info("run 结束：退出码 %d（%s，%d 个错误）", code, reason, len(issues))
-    return RunReport(source=source, exit_code=code, exit_reason=reason, errors=issues)
+async def _paired(command: Mode, path: str | Path, options: RunOptions, env: Mapping[str, str] | None,
+                  on_event: OnEvent | None, cancel_event: CancelToken | None,
+                  transport: httpx.AsyncBaseTransport | None) -> RunReport:  # fmt: skip
+    source, started = str(path), _now()
+    sides: tuple[Side, ...] = SIDES if command == "run" else ("candidate",)
+    loaded = await _load(command, path, sides, env, RunReport)
+    overrides = {"--candidate-url": options.candidate_url}
+    if command == "run":
+        overrides["--baseline-url"] = options.baseline_url
+    _check_usage(command, source, [r.name for r in loaded.suite.requests], options.only, overrides, RunReport)
+    plans = _plans(loaded, options.only)
+    snap = None
+    if isinstance(options, CompareOptions):
+        snap = _compare_snapshot(source, options, [plan.name for plan in plans])
+    out = options.out or rundir.default_out_dir(started)
+    try:
+        rundir.check(out, _ignored(options))
+    except OSError as exc:
+        raise _internal_error(command, source, str(exc), RunReport) from None
+    log.info("%s 开始：%d 条请求，run 目录 %s", command, len(plans), out)
+    targets = Targets(options.baseline_url if command == "run" else None, options.candidate_url, snap)
+    executor = Executor(loaded.suite, command, targets, on_event, cancel_event)
+    executed = await executor.run_all(plans, transport)
+    return _finish(command, source, options, out, executed, started, loaded.suite, _internal(executor, executed))
 
 
 async def run(
@@ -366,28 +372,210 @@ async def run(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> RunReport:
     """两侧都实时请求：基线串行 2 次、候选 1 次，然后逐条对比，写 run 目录和 result.json。"""
-    options = options or RunOptions()
-    source = str(path)
-    started = _now()
     try:
-        loaded = await asyncio.to_thread(load_suite, path, SIDES, env)
-    except ConfigError as exc:
-        return _suite_error(source, exc.issues)
-    issues = _check_options(source, [r.name for r in loaded.suite.requests], options)
-    if issues:
-        return _suite_error(source, issues)
-    out = options.out or rundir.default_out_dir(started)
-    try:
-        rundir.check(out, _ignored(options))
-    except OSError as exc:
-        log.error("%s", exc)
-        return _internal_error(source, str(exc))
-    plans = _plans(loaded, options.only)
-    log.info("run 开始：%d 条请求，run 目录 %s", len(plans), out)
-    executor = _Executor(loaded.suite, options, on_event, cancel_event)
-    executed = await executor.run_all(plans, transport)
-    return _finish(source, options, out, executed, started, loaded.suite, executor.callback_errors)
+        return await _paired("run", path, options or RunOptions(), env, on_event, cancel_event, transport)
+    except _Stop as stop:
+        assert isinstance(stop.report, RunReport)
+        return stop.report
 
 
 def run_sync(path: str | Path, options: RunOptions | None = None, **kwargs: Any) -> RunReport:
     return asyncio.run(run(path, options, **kwargs))
+
+
+async def compare(
+    path: str | Path,
+    options: CompareOptions,
+    *,
+    env: Mapping[str, str] | None = None,
+    on_event: OnEvent | None = None,
+    cancel_event: CancelToken | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> RunReport:
+    """基线读快照，候选实时请求 1 次，然后逐条对比。只需要 candidate 的环境变量。
+
+    快照缺失或指纹不一致的请求是 inconclusive，但候选照样请求并写进 run 目录，随后可以 accept。"""
+    try:
+        return await _paired("compare", path, options, env, on_event, cancel_event, transport)
+    except _Stop as stop:
+        assert isinstance(stop.report, RunReport)
+        return stop.report
+
+
+def compare_sync(path: str | Path, options: CompareOptions, **kwargs: Any) -> RunReport:
+    return asyncio.run(compare(path, options, **kwargs))
+
+
+# ---------- record ----------
+
+_NOT_WRITTEN = "条请求没有写入快照"
+
+
+class RecordOptions(BaseModel):
+    snapshot: Path
+    clean: bool = False
+    """先清空快照：新快照只包含本次写入的请求。"""
+    baseline_url: str | None = None
+    only: list[str] = []
+
+
+class RecordReport(CommandReport):
+    """record 的返回值。requests 是每条请求只对基线判定的结果（含不稳定字段建议），written 是写入的请求名。"""
+
+    snapshot: str | None = None
+    requests: list[RequestResult] = []
+    written: list[str] = []
+    cancelled: bool = False
+
+    @property
+    def not_written(self) -> list[RequestResult]:
+        return [r for r in self.requests if r.name not in self.written]
+
+
+def _record_entries(executed: list[Executed]) -> list[snapshot.NewEntry]:
+    return [
+        snapshot.NewEntry(item.plan.name, item.plan.fingerprint, item.keep, "record", item.plan.request.compare_headers)
+        for item in executed
+        if item.keep
+    ]
+
+
+def _save(command: str, source: str, root: Path, entries: list[snapshot.NewEntry], base: snapshot.Manifest | None,
+          report: type[CommandReport]) -> None:  # fmt: skip
+    _snapshot_step(command, source, report, lambda: snapshot.write(root, entries, base, _now()))
+
+
+async def _record(path: str | Path, options: RecordOptions, env: Mapping[str, str] | None, on_event: OnEvent | None,
+                  cancel_event: CancelToken | None, transport: httpx.AsyncBaseTransport | None) -> RecordReport:  # fmt: skip
+    source = str(path)
+    loaded = await _load("record", path, ("baseline",), env, RecordReport)
+    names = [r.name for r in loaded.suite.requests]
+    _check_usage("record", source, names, options.only, {"--baseline-url": options.baseline_url}, RecordReport)
+    root, base = _open_snapshot("record", source, options.snapshot, options.clean, RecordReport)
+    plans = _plans(loaded, options.only)
+    log.info("record 开始：%d 条请求，快照 %s%s", len(plans), root, "（--clean）" if options.clean else "")
+    executor = Executor(loaded.suite, "record", Targets(baseline_url=options.baseline_url), on_event, cancel_event)
+    executed = await executor.run_all(plans, transport)
+    entries = _record_entries(executed)
+    if entries:
+        _save("record", source, root, entries, base, RecordReport)
+    elif options.clean:
+        log.warning("一条请求都没有写入，--clean 不生效，快照 %s 保持不变", root)
+    requests = [item.result for item in executed]
+    state = ExitState(
+        internal_error=_internal(executor, executed), incomplete=len(requests) - len(entries), incomplete_text=_NOT_WRITTEN
+    )
+    code, reason = exit_code(state)
+    _finish_log("record", code, reason)
+    return RecordReport(
+        source=source, exit_code=code, exit_reason=reason, snapshot=str(options.snapshot), requests=requests,
+        written=[e.name for e in entries], cancelled=any(item.cancelled for item in executed),
+    )  # fmt: skip
+
+
+async def record(
+    path: str | Path,
+    options: RecordOptions,
+    *,
+    env: Mapping[str, str] | None = None,
+    on_event: OnEvent | None = None,
+    cancel_event: CancelToken | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> RecordReport:
+    """只请求基线（每条串行 2 次），按请求合并写入快照。只需要 baseline 的环境变量。
+
+    error、401/403/429、5xx、不满足 success 的请求不写入，保留旧 sample。"""
+    try:
+        return await _record(path, options, env, on_event, cancel_event, transport)
+    except _Stop as stop:
+        assert isinstance(stop.report, RecordReport)
+        return stop.report
+
+
+def record_sync(path: str | Path, options: RecordOptions, **kwargs: Any) -> RecordReport:
+    return asyncio.run(record(path, options, **kwargs))
+
+
+# ---------- accept ----------
+
+
+class AcceptOptions(BaseModel):
+    snapshot: Path
+    only: list[str] = []
+
+
+class Rejected(BaseModel):
+    name: str
+    reason: str
+
+
+class AcceptReport(CommandReport):
+    """accept 的返回值。source 是 run 目录。"""
+
+    snapshot: str | None = None
+    accepted: list[str] = []
+    rejected: list[Rejected] = []
+
+
+def _run_dir_result(run_dir: Path) -> RunResult:
+    try:
+        return rundir.read_result(run_dir)
+    except OSError as exc:
+        raise _internal_error("accept", str(run_dir), str(exc), AcceptReport) from None
+
+
+def _judge_accept(run_dir: Path, req: RequestResult) -> tuple[snapshot.NewEntry | None, str | None, bool]:
+    """返回 (要写入的条目, 拒绝原因, run 目录是否损坏)。"""
+    try:
+        side = rundir.read_side(run_dir, "candidate", req.name)
+    except SampleFormatError as exc:
+        return None, f"run 目录里的候选响应损坏：{exc}", True
+    samples = side.samples if side is not None else []
+    if side is not None and (side.name != req.name or len(samples) != 1):
+        return None, "run 目录里的候选响应损坏：name 不对或 sample 数不是 1", True
+    reason = acceptance.rejection(req, samples[0] if samples else None)
+    if reason is not None or side is None:
+        return None, reason, False
+    return snapshot.NewEntry(req.name, side.fingerprint, samples, "accept", list(samples[0].headers)), None, False
+
+
+def accept_sync(run_dir: str | Path, options: AcceptOptions) -> AcceptReport:
+    """把 run 目录里的候选响应按请求合并进快照（快照不存在时新建）。不读 suite。"""
+    try:
+        return _accept(Path(run_dir), options)
+    except _Stop as stop:
+        assert isinstance(stop.report, AcceptReport)
+        return stop.report
+
+
+def _accept(run_dir: Path, options: AcceptOptions) -> AcceptReport:
+    source = str(run_dir)
+    result = _run_dir_result(run_dir)
+    names = [r.name for r in result.requests]
+    _check_usage("accept", source, names, options.only, {}, AcceptReport)
+    root, base = _open_snapshot("accept", source, options.snapshot, False, AcceptReport)
+    entries: list[snapshot.NewEntry] = []
+    rejected: list[Rejected] = []
+    broken = False
+    for req in result.requests:
+        if options.only and req.name not in options.only:
+            continue
+        entry, reason, bad = _judge_accept(run_dir, req)
+        broken = broken or bad
+        if entry is not None:
+            entries.append(entry)
+        else:
+            log.info("%s：拒绝（%s）", req.name, reason)
+            rejected.append(Rejected(name=req.name, reason=reason or ""))
+    if entries:
+        _save("accept", source, root, entries, base, AcceptReport)
+    code, reason = exit_code(ExitState(internal_error=broken, incomplete=len(rejected), incomplete_text=_NOT_WRITTEN))
+    _finish_log("accept", code, reason)
+    return AcceptReport(
+        source=source, exit_code=code, exit_reason=reason, snapshot=str(options.snapshot), accepted=[e.name for e in entries],
+        rejected=rejected,
+    )  # fmt: skip
+
+
+async def accept(run_dir: str | Path, options: AcceptOptions) -> AcceptReport:
+    return await asyncio.to_thread(accept_sync, run_dir, options)

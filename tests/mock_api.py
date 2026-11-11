@@ -1,4 +1,4 @@
-"""run 测试共用的 mock 服务：httpx.MockTransport 按 (host, path) 返回固定内容。"""
+"""run / record / compare / accept 测试共用的 mock 服务：httpx.MockTransport 按 (host, path) 返回固定内容。"""
 
 from __future__ import annotations
 
@@ -97,3 +97,28 @@ def only(report: service.RunReport, name: str | None = None):
 
 def types(request_result) -> list[str]:
     return [f.type for f in request_result.findings]
+
+
+def _suite_file(tmp_path: Path, text: str) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    suite = tmp_path / "suite.yaml"
+    suite.write_text(text)
+    return suite
+
+
+def record(tmp_path: Path, text: str, server: Server, env=None, **opts) -> service.RecordReport:
+    opts.setdefault("snapshot", tmp_path / "snap")
+    suite = _suite_file(tmp_path, text)
+    return service.record_sync(suite, service.RecordOptions(**opts), env=env or {}, transport=server.transport)
+
+
+def compare(tmp_path: Path, text: str, server: Server, env=None, **opts) -> service.RunReport:
+    opts.setdefault("snapshot", tmp_path / "snap")
+    opts.setdefault("out", tmp_path / "out")
+    suite = _suite_file(tmp_path, text)
+    return service.compare_sync(suite, service.CompareOptions(**opts), env=env or {}, transport=server.transport)
+
+
+def accept(tmp_path: Path, run_dir: Path | str | None = None, **opts) -> service.AcceptReport:
+    opts.setdefault("snapshot", tmp_path / "snap")
+    return service.accept_sync(run_dir or tmp_path / "out", service.AcceptOptions(**opts))

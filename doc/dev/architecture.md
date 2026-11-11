@@ -24,9 +24,18 @@ flowchart LR
   DIFF --> MODELS
   DIFF --> PATHS
   JSONLOAD[core.jsonload] --> MODELS
-  SVC --> RUNNER[core.runner]
-  SVC --> FLOW[core.flow]
+  SVC --> EXEC[core.executor]
+  EXEC --> RUNNER[core.runner]
+  EXEC --> FLOW[core.flow]
+  SVC --> FLOW
   SVC --> RUNDIR[core.rundir]
+  SVC --> SNAP[core.snapshot]
+  SVC --> ACCEPT[core.accept]
+  EXEC --> SNAP
+  SNAP --> SAMPLES
+  SNAP --> STATUS
+  ACCEPT --> RESULT
+  ACCEPT --> STATUS
   FLOW --> STATUS[core.status]
   FLOW --> DIFF
   FLOW --> UNSTABLE[core.diff.unstable]
@@ -50,7 +59,7 @@ flowchart LR
 |---|---|---|
 | `core/models.py` | 跨模块共用的枚举和模型：`Level`、`Side`、`WarningCode`、`WarningItem`；finding 相关：`FindingType`、`Finding`、`ValueType`、`RuleRef`、`PathToken`、`Absent`（单例 `ABSENT`）；`Suggestion` | `format_loc`、`to_path_tokens`、`finding_id` |
 | `core/paths.py` | 路径语法：解析、格式化、匹配、泛化、具体程度 | `parse`、`format_path`、`match`、`covers`、`overlaps`、`generalize`、`specificity` |
-| `core/config.py` | suite 的 pydantic 模型；YAML 加载与规模限制；`${VAR}` 替换；报错行号 | `load_suite`、`load_suite_text`、`substitute_env`、`Suite.success_of`、`base_url_problem`、`format_where` |
+| `core/config.py` | suite 的 pydantic 模型；YAML 加载与规模限制；`${VAR}` 替换；报错行号 | `load_suite`、`load_suite_text`、`substitute_env`、`Suite.success_of`、`base_url_problem`、`format_where`、`NAME_PATTERN` |
 | `core/expr.py` | success / asserts 表达式：AST 白名单编译、simpleeval 求值、计算量预算；重新导出 `expr_values` 的视图类 | `compile_expr`、`eval_success`、`eval_assert`、`Outcome` |
 | `core/expr_values.py` | 表达式里的值怎么运算：只读视图、JSON 语义的相等与包含、内置函数、运算符；类型不匹配一律抛 `ExprEvalError` | `JsonView`、`HeadersView`、`SideView`、`json_equal`、`contains`、`FUNCTIONS`、`OPERATORS`、`type_name` |
 | `core/rules.py` | 规则按属性合并、ignore 剪枝、静态无效规则检测、本次未命中的规则 | `RuleSet.resolve`、`RuleSet.is_pruned`、`static_warnings`、`unmatched_rules` |
@@ -60,15 +69,18 @@ flowchart LR
 | `core/diff/schema.py` | 不配对地比较元素：扁平表（路径 → 类型集合、小数位集合）及其比较；数组长度 finding | `compare_schema`、`compare_elements`、`build_table`、`report_length` |
 | `core/diff/context.py` | 一次对比的上下文：规则、对比模式、finding / warning 收集，`Presence`（字段 / 元素缺失用哪种 finding） | `DiffContext.report`、`DiffContext.warn`、`DiffContext.where`、`DiffContext.value_level` |
 | `core/diff/values.py` | JSON 类型、小数位、标量相等、标量的规范形式（keyed 的 key、unordered 的元素） | `json_type`、`scale`、`scale_of`、`decimal_text`、`scalar_equal`、`canon_scalar` |
-| `core/samples.py` | sample 的内存表示（`Sample`，响应头名字小写）、落盘格式（只留 `Content-Type` 和 `compare_headers`，body 存原文或 `body_b64`）、请求指纹 | `Sample`、`to_record`、`from_record`、`kept_headers`、`fingerprint`、`FINGERPRINT_VERSION` |
+| `core/samples.py` | sample 的内存表示（`Sample`，响应头名字小写）、落盘格式（只留 `Content-Type` 和 `compare_headers`，body 存原文或 `body_b64`）、一条请求的文件（run 目录两侧和快照共用）、请求指纹 | `Sample`、`to_record`、`from_record`、`side_document`、`parse_side_document`、`dump_json`、`SideFile`、`SampleFormatError`、`kept_headers`、`fingerprint`、`FINGERPRINT_VERSION` |
 | `core/runner.py` | 发请求：URL 拼接、请求头合并、`httpx.AsyncClient` + 信号量、自己实现的重试 | `make_call`、`build_url`、`merge_headers`、`Runner.fetch`、`describe_error`、`new_client` |
-| `core/status.py` | 请求状态判定：有序规则表 `STATUS_RULES` | `judge`、`Facts`、`RequestStatus` |
-| `core/flow.py` | 单条请求的对比流程：状态 → 状态码 → success → 响应头 → body → asserts → 不稳定字段建议；填 `finding_id` | `evaluate`、`Plan`、`Evaluation` |
+| `core/status.py` | 请求状态判定：有序规则表 `STATUS_RULES`；快照问题的枚举和提示 | `judge`、`Facts`、`RequestStatus`、`SnapshotProblem`、`SNAPSHOT_PROBLEM_TEXT`、`AUTH_OR_LIMIT` |
+| `core/flow.py` | 单条请求的对比流程：状态 → 状态码 → success → 响应头 → body → asserts → 不稳定字段建议；填 `finding_id`；record 只看基线的判定 | `evaluate`、`evaluate_baseline`、`Plan`、`Evaluation` |
 | `core/diff/unstable.py` | 不稳定字段建议：基线两个 sample 按 `compare: values` 对比后过滤 | `suggest_unstable`、`ignore_snippet` |
 | `core/result.py` | `result.json` 的数据模型；退出码谓词表 `EXIT_RULES` | `RunResult`、`RequestResult`、`SampleInfo`、`Summary`、`UnmatchedRule`、`exit_code`、`run_exit_state` |
-| `core/rundir.py` | run 目录：默认目录名、复用规则、两侧响应和 `result.json` 的写入 | `default_out_dir`、`check`、`prepare`、`write_side`、`write_result` |
-| `core/service.py` | 对外编排入口，提供 async 和同步两种调用；进度事件、取消；本次未命中的规则 | `validate_suite`、`validate_suite_sync`、`run`、`run_sync`、`RunOptions`、`RunReport`、`RequestStarted`、`RequestDone` |
-| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令）、日志初始化 | `main`、`cli`、`validate`、`run`、`demo`、`setup_logging` |
+| `core/rundir.py` | run 目录：默认目录名、复用规则、两侧响应和 `result.json` 的写入；accept 读回 | `default_out_dir`、`check`、`prepare`、`write_side`、`write_result`、`read_result`、`read_side` |
+| `core/snapshot.py` | 快照：manifest 模型、读（含版本检查）、写前检查、按请求合并、原子替换、残留恢复 | `load`、`readable`、`check_writable`、`write`、`recover`、`Snapshot`、`Manifest`、`NewEntry`、`SnapshotError`、`SnapshotVersionError` |
+| `core/accept.py` | accept 的判定：有序规则表 `ACCEPT_RULES` | `rejection` |
+| `core/executor.py` | 并发执行每条请求：并发名额、取消、进度事件、单条请求的意外异常；run / compare / record 三种模式 | `Executor`、`Executed`、`Targets`、`RequestStarted`、`RequestDone`、`CancelToken` |
+| `core/service.py` | 对外编排入口，提供 async 和同步两种调用；命令的前置检查和退出码；本次未命中的规则 | `validate_suite(_sync)`、`run(_sync)`、`compare(_sync)`、`record(_sync)`、`accept(_sync)`、`RunOptions`、`CompareOptions`、`RecordOptions`、`AcceptOptions`、`RunReport`、`RecordReport`、`AcceptReport`、`CommandReport` |
+| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令）、日志初始化 | `main`、`cli`、`validate`、`run`、`compare`、`record`、`accept`、`demo`、`setup_logging` |
 | `demo/server.py` | 本地演示服务：标准库 `ThreadingHTTPServer`；`/v1`、`/v2` 前缀选数据集，有序路由表 `ROUTES`；Decimal 原样输出；不开 `SO_REUSEADDR`，端口被占用时直接报错 | `make_server`、`base_url`、`dispatch`、`dumps`、`DemoServer`、`DEFAULT_PORT` |
 | `demo/data.py` | 演示数据：v1 固定数据，v2 的每处改动写在 `_v2_*` 函数里 | `DATASETS` |
 | `demo/__init__.py`、`demo/suites/` | 自带的 `pass.yaml`、`regress.yaml`（作为包数据随 wheel 发布）及写出方法 | `suite_text`、`write_suites`、`SUITE_NAMES` |
@@ -218,20 +230,20 @@ flowchart TD
 ```mermaid
 flowchart TD
   A[cli.run] --> B["service.run_sync → service.run"]
-  B --> C["config.load_suite（sides=两侧）"]
+  B --> C["_paired → _load：config.load_suite（sides=两侧）"]
   C -->|ConfigError| E2["退出码 2，不写 run 目录"]
-  C --> O["_check_options：--only 的 name、覆盖地址"]
+  C --> O["_check_usage：--only 的 name、覆盖地址"]
   O -->|有问题| E2
   O --> K["rundir.check：--out 能不能用"]
   K -->|RunDirError| E3a["退出码 3，不发请求"]
   K --> P["_plans：每条请求编译 RuleSet、success、asserts，算指纹"]
-  P --> X["_Executor.run_all：asyncio.gather 所有请求"]
-  X --> X1["_one：拿到 gate 名额 → 检查 cancel_event → RequestStarted"]
-  X1 --> X2["_execute：runner.fetch 基线串行 2 次 ‖ 候选 1 次"]
+  P --> X["executor.Executor.run_all：asyncio.gather 所有请求"]
+  X --> X1["Executor._one：拿到 gate 名额 → 检查 cancel_event → RequestStarted"]
+  X1 --> X2["Executor._run：runner.fetch 基线串行 2 次 ‖ 候选 1 次"]
   X2 --> F["flow.evaluate → rules.unmatched_rules → RequestDone"]
-  X2 -->|意外异常| C["_crashed：这条记 error，内部错误"]
+  X2 -->|意外异常| CR["executor._crashed：这条记 error，内部错误"]
   F --> R["_finish：_unmatched 汇总、退出码、Summary、RunResult"]
-  C --> R
+  CR --> R
   R --> W["_write_run_dir：rundir.prepare → baseline/、candidate/ → result.json"]
   W -->|OSError| E3["退出码 3"]
 ```
@@ -240,17 +252,17 @@ flowchart TD
 - **重试**：`Runner._fetch` 自己循环，只对 `RETRYABLE`（`httpx.ConnectError`、`httpx.TimeoutException`、总时限的 `TimeoutError`）重试，最多 `retries` 次；不用 transport 自带的 `retries`，因为它不会重试超时。其他 httpx 错误和不合法的 URL 直接记为失败的 sample（`status=None`）。任何状态码都不重试。
 - **失败原因不能带请求头的值**（`runner.describe_error`）：`error` 会进日志、stdout、`result.json` 和 run 目录。发送前校验请求时的异常（`httpx.LocalProtocolError`、`UnicodeError` 等）消息里带着出问题的请求头的值（例如 h11 的 `Illegal header value b'Bearer xxx '`），所以按 `_FIXED` 表只写异常类型加固定说明；来自网络的异常（`_DETAILED`：连接错误、超时、对端协议错误、读错误）带上消息，但消息里出现任何一个请求头的值（含去掉首尾空白的写法）就整条丢掉，截断到 300 字符。`httpx.MockTransport` 不做请求头校验，这条要用真实的本地服务测。
 - **`base_url` 检查**（`config.base_url_problem`）：`urlsplit`、`.port`、`httpx.URL` 任一抛错都算格式不合法；带 userinfo（`@`）的拒绝，因为 URL 会原样进日志和 run 目录，httpx 还会把它转成 Basic 认证头发出去。suite 校验和覆盖地址共用这个函数。
-- **基线两个 sample**：`_Executor._baseline` 串行请求，第 1 次失败就不发第 2 次；候选和基线用 `asyncio.gather` 同时进行。
+- **基线两个 sample**：`Executor._baseline` 串行请求，第 1 次失败就不发第 2 次；候选和基线用 `asyncio.gather` 同时进行。
 - **代理**：httpx 默认读取代理环境变量，依赖里装了 `httpx[socks]` 以支持 SOCKS 代理。测试里 `tests/conftest.py` 清掉代理变量，否则发往 mock 服务的请求会绕到代理上。
-- **取消**：`cancel_event` 只要有 `is_set()`（`threading.Event`、`asyncio.Event` 都行）。`asyncio.gather` 一开始就创建了所有请求的协程，所以 `_one` 先拿 `run_all` 里的 gate（`asyncio.Semaphore(concurrency)`）名额，再检查取消，排队中的请求才能被取消；已经取消的请求不发出，记为 `error`，`RunResult.cancelled` 为真。
-- **进度事件**：`on_event` 回调收到 `RequestStarted` / `RequestDone`（pydantic 模型，`event` 字段区分）。回调抛异常由 `_Executor._emit` 接住，记 ERROR 日志并计入 `callback_errors`，退出码 3，运行不中断。
-- **单条请求的意外异常**：`_one` 接住 `_execute` 抛出的任何 `Exception`，由 `_crashed` 把这条记为 `error`（原因写异常类型）并标记 `internal_error`，`_finish` 据此给退出码 3。日志只写异常类型和 `traceback.format_tb` 的调用栈，不写异常消息，免得把请求内容带进日志。
+- **取消**：`cancel_event` 只要有 `is_set()`（`threading.Event`、`asyncio.Event` 都行）。`asyncio.gather` 一开始就创建了所有请求的协程，所以 `Executor._one` 先拿 `run_all` 里的 gate（`asyncio.Semaphore(concurrency)`）名额，再检查取消，排队中的请求才能被取消；已经取消的请求不发出，记为 `error`，`RunResult.cancelled` 为真。
+- **进度事件**：`on_event` 回调收到 `RequestStarted` / `RequestDone`（pydantic 模型，`event` 字段区分）。回调抛异常由 `Executor._emit` 接住，记 ERROR 日志并计入 `callback_errors`，退出码 3，运行不中断。
+- **单条请求的意外异常**：`Executor._one` 接住各模式（`_run` / `_compare` / `_record`）抛出的任何 `Exception`，由 `executor._crashed` 把这条记为 `error`（原因写异常类型）并标记 `internal_error`，`service._internal` 据此给退出码 3。日志只写异常类型和 `traceback.format_tb` 的调用栈，不写异常消息，免得把请求内容带进日志。
 
 ### 单条请求（`flow.evaluate`）
 
 - `_Flow` 先用 `jsonload.load_body` 解析两侧的第 1 个 sample（失败的 sample 当作非 JSON），收集解析 warning。
 - 再对基线求 `success`（`_success_applies`：配了 success、不是 HEAD、不是 204、是 JSON；出错记 `success_eval_error`，视为不满足），连同两侧 sample 交给 `status.judge`。
-- `status.judge` 按 `STATUS_RULES` 取第一条匹配：网络错误 → 快照问题（`snapshot_problem`，留给 compare）→ 401/403/429 → 基线 5xx → 基线不满足 success → 两侧都非 JSON 且不是 HEAD/204（`Facts.body_less`）→ ok。
+- `status.judge` 按 `STATUS_RULES` 取第一条匹配：网络错误 → 快照问题（`snapshot_problem`，只有 compare 会给）→ 401/403/429 → 基线 5xx → 基线不满足 success → 两侧都非 JSON 且不是 HEAD/204（`Facts.body_less`）→ ok。
 - `_compare`：`ok` 和 `unsupported` 都先比状态码（`status_changed` 后直接结束）；只有 `ok` 继续：`both_non_2xx` → `business_error`（候选不满足 success）→ `headers` → body（不是 HEAD/204 且没有 business_error 时：`diff_json` 或 `body_kind_changed`）→ `asserts`（两侧都是 JSON 时）→ `second_sample` + `suggest_unstable`。
 - **响应头**（`_header_finding`）：值相同不报；候选缺失 `header_missing`（breaking）；`content-type` 只比 `jsonload.media_type`，不同记 breaking；其余（包括候选新出现）记 `header_changed`（suspicious）。
 - 非 body 的 finding 由 `_Flow.report` 生成：`path` 和 `generalized_path` 都是伪路径（`$status`、`$body`、`$success`、`$header.<名字>`、`$assert[i]`），`path_tokens` 为空。
@@ -262,18 +274,57 @@ flowchart TD
 
 ### 本次未命中的规则
 
-`rules.unmatched_rules` 用显式栈遍历原始 body（对象 key 用 `Key`，数组元素用 `Index(i)`，所以 `[*]` 和 `[n]` 都能匹配），每个节点用 `paths.match`（和规则合并同一个匹配函数）把命中的规则移出待查列表，列表为空时提前结束。每条请求在 `_execute` 里算好自己的未命中规则（`_Executed.missed`，没有 JSON body 时为 `None`），这样出错只影响这一条；`service._unmatched` 只做汇总：只看 `missed` 不是 `None` 的请求；请求级规则按请求列出；defaults 规则取所有请求未命中集合的交集，只列一次。
+`rules.unmatched_rules` 用显式栈遍历原始 body（对象 key 用 `Key`，数组元素用 `Index(i)`，所以 `[*]` 和 `[n]` 都能匹配），每个节点用 `paths.match`（和规则合并同一个匹配函数）把命中的规则移出待查列表，列表为空时提前结束。每条请求在 `executor._paired` 里算好自己的未命中规则（`Executed.missed`，没有 JSON body 时为 `None`），这样出错只影响这一条；`service._unmatched` 只做汇总：只看 `missed` 不是 `None` 的请求；请求级规则按请求列出；defaults 规则取所有请求未命中集合的交集，只列一次。
 
 ### run 目录（`rundir.py`）
 
 - `default_out_dir`：`api-regress-out/<YYYYmmdd-HHMMSS>`，已存在时加 `-2`、`-3`。
-- `check`：已存在的非空目录必须是之前的 run 目录才能用：`result.json` 能解析，并且有 `schema_version`、`command`、`tool_version`（`_written_by_us`）；`ignore` 里的文件（`RunOptions.log_file`，CLI 的 `--log-file`）不算。不满足抛 `RunDirError`（`OSError` 子类）。`service.run` 在发请求之前调用，失败直接返回退出码 3。
+- `check`：已存在的非空目录必须是之前的 run 目录才能用：`result.json` 能解析，并且有 `schema_version`、`command`、`tool_version`（`_written_by_us`）；`ignore` 里的文件（`RunOptions.log_file`，CLI 的 `--log-file`）不算。不满足抛 `RunDirError`（`OSError` 子类）。`service.run` / `service.compare` 在发请求之前调用，失败直接返回退出码 3。
 - `prepare`：写入前再 `check` 一次，然后删掉旧的 `baseline/`、`candidate/`（记 INFO 日志）。不对 `--out` 本身做目录交换，避免 `--out .` 之类的误用删掉无关文件。
-- `write_side`：`<side>/<name>.json`，内容是 `name`、`fingerprint`、`fingerprint_version` 和 `samples`（`samples.to_record`）。先写两侧，最后写 `result.json`。
+- `write_side`：`<side>/<name>.json`，内容由 `samples.side_document` 生成：`name`、`fingerprint`、`fingerprint_version` 和 `samples`（`samples.to_record`）。先写两侧，最后写 `result.json`。
+- `read_result` / `read_side`：accept 读回 run 目录。`read_result` 要求 `_written_by_us`、能按 `RunResult` 解析、请求名都符合 `config.NAME_PATTERN`（请求名会拼进文件路径，防止改过的 `result.json` 穿出目录），否则抛 `RunDirError`；`read_side` 文件不存在返回 `None`，格式不对抛 `SampleFormatError`。
 
 ### 退出码（`result.py`）
 
 `EXIT_RULES` 是按 2 > 3 > 1 > 4 > 0 排列的 `(码, 谓词, 原因)` 表，`exit_code(ExitState)` 取第一个满足的。`run_exit_state` 统计达到 `--fail-on`（`FAIL_ON_LEVELS`）的 finding 数和 `error` / `inconclusive` 的请求数。suite 错误（2）在加载阶段直接返回；单条请求的意外异常、进度回调出错通过 `ExitState.internal_error` 参与计算。写 run 目录失败（3）发生在写入阶段：`RunReport` 和其中的 `result` 都改成 3 和新原因，`out_dir` 为 `None`（CLI 显示 `result: 未写入`）；磁盘上如果已经写出了 `result.json`，里面是写入前算出的码。
+
+## record / compare / accept
+
+三个命令共用 `service` 里的前置检查（`_load` 按命令需要的 target 加载 suite、`_check_usage` 检查 `--only` 和覆盖地址、`_open_snapshot` / `_compare_snapshot` 处理快照），任何一步不通过都用 `_Stop` 带着算好的返回值提前结束，**不发请求**。退出码都走 `result.exit_code`：record / accept 的「没写入」用 `ExitState.incomplete` 加 `incomplete_text`。
+
+```mermaid
+flowchart TD
+  R[cli.record] --> R1["service._record：_load（sides=baseline）→ _check_usage"]
+  R1 --> R2["_open_snapshot：snapshot.recover → check_writable（--clean 不读 manifest）"]
+  R2 --> R3["Executor（record 模式）._record：基线串行 2 次 → flow.evaluate_baseline"]
+  R3 --> R4["_record_entries：Executed.keep 非空的才写"]
+  R4 --> R5["snapshot.write：合并 + 原子替换（一条都没有时跳过，--clean 也一样）"]
+  C[cli.compare] --> C1["service._paired（compare）：_load（sides=candidate）→ _check_usage"]
+  C1 --> C2["_compare_snapshot：snapshot.readable → snapshot.load（只读）"]
+  C2 --> C3["rundir.check → Executor（compare 模式）._compare：候选 1 次 ‖ Snapshot.baseline"]
+  C3 --> C4["flow.evaluate（snapshot_problem）→ 同 run 的 _finish"]
+  A[cli.accept] --> A1["service._accept：rundir.read_result → _check_usage"]
+  A1 --> A2["_open_snapshot（不 clean）"]
+  A2 --> A3["每条请求：_judge_accept：rundir.read_side → accept.rejection"]
+  A3 --> A4["snapshot.write（有接受的才写）"]
+```
+
+- **执行器**（`executor.py`）：`Executor` 按 `Mode` 选择 `_run` / `_compare` / `_record`，并发名额、取消、进度事件和意外异常的处理三种模式完全一样（见上文 run 主流程）。`Targets` 带着覆盖地址和快照。
+- **compare 的基线**：`Snapshot.baseline` 返回快照里的 sample 和 `SnapshotProblem`：没有这条请求时是 `([], "missing")`，指纹或 `fingerprint_version` 不一致时照样返回 sample 加 `fingerprint_mismatch`。`flow.evaluate` 在基线为空时用占位 sample `_NO_BASELINE` 走判定：`STATUS_RULES` 里快照问题排在网络错误之后、其他规则之前，所以占位 sample 不会影响结果，候选网络错误仍然判 `error`。有快照问题且状态是 `inconclusive` 时额外对候选求一次 success（`_Flow.candidate_success`），写进 `RequestResult.candidate_success`。`_compare` 在 `status_changed` 后结束前也调用一次（`warn=False`：这条请求不报 success 相关的 warning），否则状态码变了、候选又不满足 success 的响应会被 accept 收进快照。
+- **record 的判定**（`flow.evaluate_baseline`）：`_Flow` 的候选为 `None` 时指向基线，`Facts` 两侧都放基线，复用 `STATUS_RULES`：提示里的"哪一侧"都会是基线。`ok` / `unsupported` 才写入；第 2 个 sample 由 `_Flow.second_sample` 判断能不能用（不能用时给 `second_sample_unavailable`，只写第 1 个），两个都是 JSON 时算不稳定字段建议。
+- **accept 的判定**（`accept.py`）：`ACCEPT_RULES` 是 `(谓词, 原因)` 的有序表，按 record 的标准检查候选本身（网络错误、401/403/429、5xx、不满足 success），再加上请求状态（`error`、非快照原因的 `inconclusive`）。只用 run 目录里的信息：`RequestResult.status`、`snapshot_problem`、`candidate_success`、`findings` 里的 `business_error`，以及 `candidate/<name>.json` 的 sample 和指纹。候选文件损坏时拒绝这条并记为内部错误（退出码 3）。写进快照时 `compare_headers` 用候选 sample 现有的响应头名字（落盘时已经过滤过）。
+
+## 快照（`core/snapshot.py`）
+
+- **格式**：`manifest.json`（`Manifest`：`schema_version`、`tool_version`、`fingerprint_version`、`updated_at`、`requests: {name: ManifestEntry}`，`ManifestEntry` 是 `fingerprint`、`recorded_at`、`source`、`samples`）和 `requests/<name>.json`（`samples.side_document`，和 run 目录的两侧文件相同）。manifest 是索引；指纹以请求文件里的为准。
+- **读**（`load`）：目录不存在、或是空目录，当作空快照；有内容但没有 `manifest.json` 抛 `SnapshotError`。`_read_manifest` 先单独看 `schema_version`：是整数但不是当前版本时抛 `SnapshotVersionError`（退出码 2），再用 pydantic 校验（失败算损坏，退出码 3），请求名也要符合 `config.NAME_PATTERN`。只读本次要用的请求文件，`_read_entry` 用 `parse_side_document` 解析，格式错误、`name` 不对、没有 sample 都算损坏。`samples.from_record` 对任何坏数据都抛 `SampleFormatError`（不会漏出 `TypeError` / `ValueError`）。
+- **写前检查**（`check_writable`）：已存在的非空目录必须含 `manifest.json`（`_is_snapshot_dir`）；不是 `--clean` 时读 manifest，并检查它列出的请求文件都存在；不解析这些文件，`_fill` 按字节原样复制没变的那些（大快照上 `record --only x` 不必把每个 body 都解一遍），内容坏了由 compare 的 `load` 报。返回现有的 `Manifest` 作为合并的底。
+- **异常 → 退出码**：`service._snapshot_step` 统一把快照操作的 `SnapshotVersionError` 换成退出码 2、其他 `OSError`（含 `SnapshotError`）换成 3；`_open_snapshot`（record / accept）、`_compare_snapshot`、`_save` 都经过它。
+- **JSON 格式**：run 目录和快照的文件都用 `samples.dump_json` 写（UTF-8、不转义非 ASCII、缩进 2、末尾换行），两边格式不会分叉。
+- **写**（`write`）：`_merged_manifest` 合并索引（本次的条目覆盖同名的旧条目，按 name 排序）；`_fill` 在 `tempfile.mkdtemp(prefix=".<name>.tmp-", dir=父目录)` 里复制没变的请求文件（`shutil.copy2`，不重新序列化）、写入新的请求文件和 manifest；`_swap` 做 `snap → snap.old`、`tmp → snap`、删 `snap.old`；最后一步失败时新快照已经就位，只记 WARNING，留给下次 `recover` 删。不能直接 `os.replace` 到已存在的非空目录（`ENOTEMPTY`），所以要先把旧目录挪开。任何 `OSError` 都删掉临时目录、转成 `SnapshotError`，旧快照不受影响。
+- **残留**（`recover`，record / accept 开始时调用）：路径先 `resolve()`（这样 `--snapshot .` 也有名字）。`snap.old` 存在时：没有 `manifest.json` 说明不是我们留下的，报错；`snap` 不存在说明中断在两次 rename 之间，把 `.old` 恢复回来；否则删掉 `.old`。最后删掉同级的 `.<name>.tmp-*`。不支持多个进程同时写同一个快照。
+- **compare 只读**（`readable`）：不调用 `recover`，不删除、不改名任何东西，免得删掉另一个进程正在写的临时目录，或在只读挂载上失败。`snap` 不存在而 `snap.old` 含 `manifest.json` 时（中断在两次 rename 之间）返回 `snap.old` 来读，记 WARNING。
+- **record 一条都没写入时不写快照**，`--clean` 也一样（`service._record` 记 WARNING）：否则基线不可用、token 过期时 `--clean` 会把好的快照换成空的。
 
 ## result.json 契约
 
@@ -284,17 +335,18 @@ flowchart TD
 - **缺失**：`{"absent": true}`（`models.ABSENT`），和 `null` 区分。schema 数组的 finding 两侧是类型集合或小数位集合，附 `example_index`。
 - **`finding_id`**：`models.finding_id` = sha256(请求名 \0 类型 \0 具体路径) 的前 16 个十六进制字符。keyed 数组的具体路径用 key 值（`[sku=A]`，数字按数值规范化），schema 数组的具体路径就是泛化路径，非 body 的 finding 用伪路径，所以跨运行稳定、keyed 不同元素互不相同。
 - **`rule_refs`**：`{scope, index}`，`scope` 为 `defaults` 或 `request`。
+- **`snapshot_problem` / `candidate_success`**（`RequestResult`）：给 accept 用的事实。前者是 compare 时的 `SnapshotProblem`（`missing` / `fingerprint_mismatch`），后者是候选的 success 结果（`_Flow.candidate_success`，只求值一次；没有求值为 `null`）。`baseline` 在快照里没有这条请求时为空列表。
 - 不含任何请求头；sample 只给 URL、状态码、耗时、重试次数、Content-Type 和错误原因。
 
 ## CLI 约定
 
-- 子命令挂在 `cli` 命令组下。通用参数（`--log-level`、`--log-file`）由装饰器 `common_options` 统一添加；它也负责初始化日志（日志文件打不开返回 3），并把未捕获的异常记为内部错误（退出码 3）。Click 自己的异常（`UsageError`、`Exit`、`Abort`）原样抛出，交给 `main`。
+- 子命令挂在 `cli` 命令组下：`validate`、`run`、`compare`、`record`、`accept`、`demo`。几个命令共用的参数（`--snapshot`、`--only`、`--out`、`--fail-on`、suite 参数）定义成模块级的装饰器常量；`_finish` 统一打印错误或摘要，最后一行总是 `exit N: 原因`。通用参数（`--log-level`、`--log-file`）由装饰器 `common_options` 统一添加；它也负责初始化日志（日志文件打不开返回 3），并把未捕获的异常记为内部错误（退出码 3）。Click 自己的异常（`UsageError`、`Exit`、`Abort`）原样抛出，交给 `main`。
 - 子命令返回 int 作为退出码。`main` 用 `standalone_mode=False` 调用 Click：子命令返回值和 `ctx.exit(code)` 都会作为返回值传出来；`ClickException`（含参数错误）返回 2，`Abort` 返回 3。
 - 错误和 warning 的位置前缀统一由 `config.format_where` 生成：`suite.yaml:12: requests[0].method:`。
 
 ## 日志
 
 - 标准库 `logging`。`cli.setup_logging` 把 `api_regress` logger 输出到 stderr，`--log-file` 时同时写文件。
-- **INFO 节点**：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）；run 开始的请求数（`service.run`）、每次请求的发出和返回（`runner.Runner`：请求名、target、方法、URL、状态码、耗时、重试次数；发出时只列请求头的**名字**）、每条请求的状态和 finding / warning 数（`flow.evaluate`）、汇总（`service._log_summary`）、写入的每个文件（`service._write_run_dir`、`rundir.write_result`）、run 退出码及原因（`service._finish`、`service._suite_error`）。
-- **WARNING**：validate 的 warning、重试（`runner.Runner._fetch`）。**ERROR**：run 的 suite 错误、写 run 目录失败。**DEBUG**：响应体的前 2KB（`repr` 形式）。
-- **任何级别都不输出请求头的值**：`runner.Call.headers` 只传给 httpx；`Sample`、run 目录、`result.json` 里没有请求头；保存的响应头只有 `Content-Type` 和 `compare_headers`。报错和 warning 只包含字段位置、变量名。`tests/test_cli.py`（validate）和 `tests/test_run_cli.py`（run：stdout、stderr、日志文件、run 目录）用哨兵 token 校验。
+- **INFO 节点**：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）；run 开始的请求数（`service.run`）、每次请求的发出和返回（`runner.Runner`：请求名、target、方法、URL、状态码、耗时、重试次数；发出时只列请求头的**名字**）、每条请求的状态和 finding / warning 数（`flow.evaluate`）、汇总（`service._log_summary`）、写入的每个文件（`service._write_run_dir`、`rundir.write_result`）、各命令的退出码及原因（`service._finish_log`，由 `_finish`、`_suite_error`、`_internal_error`、`_record`、`_accept` 调用）；record / compare 开始的请求数（`service._record`、`service._paired`）、快照的读取和写入（`snapshot.load`、`snapshot.write`）、残留的删除和恢复（`snapshot.recover`，恢复记 WARNING）、compare 读中断残留（`snapshot.readable`，WARNING）、accept 拒绝的每条请求（`service._accept`）。
+- **WARNING**：validate 的 warning、重试（`runner.Runner._fetch`）。**ERROR**：suite 错误、`--out` / 快照 / run 目录不能用或写入失败（`service._suite_error`、`service._internal_error`）。快照目录不存在时 compare 记 WARNING。**DEBUG**：响应体的前 2KB（`repr` 形式）。
+- **任何级别都不输出请求头的值**：`runner.Call.headers` 只传给 httpx；`Sample`、run 目录、快照、`result.json` 里没有请求头；保存的响应头只有 `Content-Type` 和 `compare_headers`。报错和 warning 只包含字段位置、变量名。`tests/test_cli.py`（validate）、`tests/test_run_cli.py`（run：stdout、stderr、日志文件、run 目录）和 `tests/test_snapshot_cli.py`（record → compare → accept：日志文件、快照、run 目录，响应的 `Set-Cookie` 里也放了哨兵）用哨兵 token 校验。
