@@ -42,6 +42,7 @@ flowchart LR
 
 - `core` 是纯库，不能 import `cli` 或 `report`。由 `pyproject.toml` 里的 import-linter 契约保证，CI 执行 `lint-imports`。
 - `cli` 只做参数解析、日志初始化、打印摘要，业务都通过 `core.service`。
+- `demo` 是独立的演示服务，不依赖 `core`、`cli`、`report`，`core` 也不依赖它（同样由 import-linter 契约保证）。只有 `cli.demo` 调用它。
 
 ## 模块
 
@@ -67,7 +68,10 @@ flowchart LR
 | `core/result.py` | `result.json` 的数据模型；退出码谓词表 `EXIT_RULES` | `RunResult`、`RequestResult`、`SampleInfo`、`Summary`、`UnmatchedRule`、`exit_code`、`run_exit_state` |
 | `core/rundir.py` | run 目录：默认目录名、复用规则、两侧响应和 `result.json` 的写入 | `default_out_dir`、`check`、`prepare`、`write_side`、`write_result` |
 | `core/service.py` | 对外编排入口，提供 async 和同步两种调用；进度事件、取消；本次未命中的规则 | `validate_suite`、`validate_suite_sync`、`run`、`run_sync`、`RunOptions`、`RunReport`、`RequestStarted`、`RequestDone` |
-| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令）、日志初始化 | `main`、`cli`、`validate`、`run`、`setup_logging` |
+| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令）、日志初始化 | `main`、`cli`、`validate`、`run`、`demo`、`setup_logging` |
+| `demo/server.py` | 本地演示服务：标准库 `ThreadingHTTPServer`；`/v1`、`/v2` 前缀选数据集，有序路由表 `ROUTES`；Decimal 原样输出；不开 `SO_REUSEADDR`，端口被占用时直接报错 | `make_server`、`base_url`、`dispatch`、`dumps`、`DemoServer`、`DEFAULT_PORT` |
+| `demo/data.py` | 演示数据：v1 固定数据，v2 的每处改动写在 `_v2_*` 函数里 | `DATASETS` |
+| `demo/__init__.py`、`demo/suites/` | 自带的 `pass.yaml`、`regress.yaml`（作为包数据随 wheel 发布）及写出方法 | `suite_text`、`write_suites`、`SUITE_NAMES` |
 | `report/` | 报告渲染（尚未实现，目前为空包） | |
 
 ## validate 主流程

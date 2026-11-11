@@ -11,7 +11,7 @@
 
 差异分为 **breaking / suspicious / info** 三级，结果输出成报告，同时给出 CI 可直接使用的退出码。
 
-> 项目还在开发中：目前可用的是 `validate` 和 `run`（输出 `result.json` 和两侧响应）；`record`、`compare`、`accept` 以及 HTML / Markdown / JUnit 报告尚未实现。下面的用法里包含设计好的目标形态。
+> 项目还在开发中：目前可用的是 `validate`、`run`（输出 `result.json` 和两侧响应）和本地演示服务 `demo`；`record`、`compare`、`accept` 以及 HTML / Markdown / JUnit 报告尚未实现。下面的用法里包含设计好的目标形态。
 
 ## 适用场景
 
@@ -37,9 +37,22 @@
 - **报告**：HTML、Markdown、JUnit XML，以及机器可读的 `result.json`。
 - **只读请求**：只发 GET / HEAD，不会改动线上数据。
 
-**不做**：Postman / Apifox 那类接口管理平台的功能，包括登录流程、请求串联、前后置脚本、Mock、接口文档。需要鉴权的接口，先自己拿到 token，再通过 `${VAR}` 注入请求头。
+**不做**：Postman / Apifox 那类接口管理平台的功能，包括登录流程、请求串联、前后置脚本、Mock、接口文档。（内置的 `demo` 服务只提供固定的演示数据，不是 Mock 功能。）需要鉴权的接口，先自己拿到 token，再通过 `${VAR}` 注入请求头。
 
 ## 快速上手
+
+### 不联网先试一下
+
+内置一个本地演示服务：`/v1` 是基线，`/v2` 是故意改坏了几处的候选（见 [doc/user/demo.md](doc/user/demo.md)）。
+
+```bash
+api-regress demo --write-suites demo/   # 写出示例 suite
+api-regress demo                        # 另开一个终端启动服务，Ctrl+C 停止
+api-regress run demo/pass.yaml          # 两侧都是 /v1：全部通过，退出码 0
+api-regress run demo/regress.yaml       # /v1 对 /v2：报出 breaking，退出码 1
+```
+
+### 对比自己的接口
 
 写一个 `suite.yaml`（完整字段见 [doc/user/suite.md](doc/user/suite.md)）：
 
@@ -78,6 +91,7 @@ requests:
 ```bash
 api-regress validate suite.yaml               # 只校验配置，不发请求
 api-regress run suite.yaml --fail-on breaking # 两边实时请求并对比
+api-regress demo                              # 启动本地演示服务
 
 # 只有一个环境时：
 api-regress record  suite.yaml --snapshot snap/   # 发版前
@@ -106,6 +120,7 @@ api-regress accept  api-regress-out/<时间戳> --snapshot snap/ --only order-de
 | [doc/user/run.md](doc/user/run.md) | `run` 命令：请求怎么发、每条请求的流程与状态、非 body 的差异、不稳定字段建议、stdout、退出码、run 目录与 `result.json` |
 | [doc/user/compare.md](doc/user/compare.md) | 对比规则：差异类型与级别、规则属性、数组模式怎么选、已知限制 |
 | [doc/user/expressions.md](doc/user/expressions.md) | `success` 与 `asserts` 表达式的写法、内置函数、不支持的语法 |
+| [doc/user/demo.md](doc/user/demo.md) | `demo` 本地演示服务：接口、v2 改了什么、两个示例 suite |
 | [doc/dev/architecture.md](doc/dev/architecture.md) | 模块职责、关键路径、主流程、`result.json` 契约（随实现补充） |
 | [schema/result.schema.json](schema/result.schema.json) | `result.json` 的 JSON Schema（自动导出） |
 | [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md) | 对比引擎在各种组合下的实际输出（自动生成） |

@@ -13,6 +13,7 @@ flowchart LR
   T3 --> T4
   T4 --> T5[T5 快照]
   T4 --> T6[T6 报告与文档]
+  T4 --> T7[T7 demo 服务]
 ```
 
 T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
@@ -30,6 +31,7 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 | T4 | 已完成 | runner / status / service / run | 10–15, 23, 30, 31, 34, 35 | mock 服务集成测试 |
 | T5 | 未开始 | snapshot / record / compare / accept | 03, 26–29 | mock 服务集成测试 |
 | T6 | 未开始 | report / 文档 | 32, 33, 36（全部通过） | 快照测试 + 解析校验 |
+| T7 | 待 review | demo / `demo` 命令 | 37 | 真实本地服务集成测试 |
 
 ---
 
@@ -218,3 +220,19 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 - README 能让新人 5 分钟内跑通。
 
 **测试**：报告快照测试、XSS 用例、用标准解析器读取 junit.xml。
+
+---
+
+## T7 demo 演示服务
+
+**交付**（spec §4.2，D19）
+- **`demo/server.py`**：标准库 `ThreadingHTTPServer`，路由用有序表 `ROUTES`；`/v1`、`/v2` 前缀选数据集；Decimal 原样输出。
+- **`demo/data.py`**：v1 固定数据；v2 的每处改动单独写在 `_v2_*` 函数里并注释预期的 finding。
+- **`demo/suites/`**：`pass.yaml`、`regress.yaml`，随 wheel 发布。
+- **CLI**：`api-regress demo [--host] [--port] [--write-suites DIR]`。
+- **import-linter**：`demo` 独立于 core / cli / report；core 不依赖 demo。
+- **文档**：`doc/user/demo.md`、README、`doc/dev/architecture.md`。
+
+**验收**：AC-37。
+
+**测试**：`tests/test_demo.py` 起真实本地服务（端口 0），用两个自带 suite 跑 `service.run_sync`，逐条锁住 regress 的 finding 集合。

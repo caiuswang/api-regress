@@ -14,6 +14,8 @@ htmlcov/
 
 # api-regress 运行产物
 api-regress-out/
+# api-regress demo --write-suites demo/ 写出的示例 suite（只忽略根目录下的，不影响 src/api_regress/demo/）
+/demo/
 
 # 本地环境与密钥
 .env
