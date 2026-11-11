@@ -29,7 +29,7 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 | T2 | 已完成 | jsonload / diff | 04–09, 16–21 | 表驱动单元测试 |
 | T3 | 已完成 | expr | 24, 25 | 单元测试，含恶意用例 |
 | T4 | 已完成 | runner / status / service / run | 10–15, 23, 30, 31, 34, 35 | mock 服务集成测试 |
-| T5 | 待 review | snapshot / record / compare / accept | 03, 26–29 | mock 服务集成测试 |
+| T5 | 已完成 | snapshot / record / compare / accept | 03, 26–29 | mock 服务集成测试 |
 | T6 | 未开始 | report / 文档 | 32, 33, 36（全部通过） | 快照测试 + 解析校验 |
 | T7 | 已完成 | demo / `demo` 命令 | 37 | 真实本地服务集成测试 |
 
