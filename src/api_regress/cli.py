@@ -11,10 +11,11 @@ from typing import Any, get_args
 
 import click
 
-from api_regress import __version__
+from api_regress import __version__, demo as demo_pkg
 from api_regress.core import service
 from api_regress.core.config import format_where
 from api_regress.core.result import FailOn
+from api_regress.demo import server as demo_server
 
 log = logging.getLogger("api_regress")
 
@@ -142,6 +143,46 @@ def run(suite: str, out: Path | None, fail_on: str, baseline_url: str | None, ca
         _print_run(report)
     click.echo(f"exit {report.exit_code}: {report.exit_reason}")
     return report.exit_code
+
+
+def _serve_demo(host: str, port: int) -> int:
+    try:
+        server = demo_server.make_server(host, port)
+    except OSError as exc:
+        click.echo(f"demo 服务启动失败：{host}:{port}（{exc.strerror or exc}）", err=True)
+        return EXIT_INTERNAL_ERROR
+    url = demo_server.base_url(server)
+    click.echo(f"demo 服务已启动：{url}（基线 {url}/v1，候选 {url}/v2），Ctrl+C 停止")
+    if url != f"http://127.0.0.1:{demo_server.DEFAULT_PORT}":
+        click.echo(f"端口不是默认值，运行 suite 前先设置：export DEMO_URL={url}")
+    log.info("demo 服务启动：%s", url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        click.echo("demo 服务已停止")
+    finally:
+        server.server_close()
+    return 0
+
+
+@cli.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="监听地址")
+@click.option("--port", type=click.IntRange(0, 65535), default=demo_server.DEFAULT_PORT, show_default=True, help="监听端口，0 表示随机")
+@click.option(
+    "--write-suites", type=click.Path(file_okay=False, path_type=Path), help="把示例 suite 写到这个目录后退出，不启动服务"
+)
+@common_options
+def demo(host: str, port: int, write_suites: Path | None) -> int:
+    """启动内置 demo 服务（固定数据，/v1 基线、/v2 候选），用于不联网试用。"""
+    if write_suites is None:
+        return _serve_demo(host, port)
+    try:
+        paths = demo_pkg.write_suites(write_suites)
+    except FileExistsError as exc:
+        raise click.UsageError(f"文件已存在，不覆盖：{exc}") from None
+    for path in paths:
+        click.echo(f"wrote {path}")
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:

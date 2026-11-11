@@ -12,6 +12,7 @@ api-regress 是一个给 QA 做 API 回归用的 Python CLI 工具，开发也�
 主要场景是**发版后接口被意外改坏**，比如删了字段、改了类型、金额精度变了、状态码变了。
 
 **非目标**：不做 Postman / Apifox 那样的接口管理平台。登录流程、请求串联、前后置脚本、Mock、断言编辑器都不做。
+内置的 `demo` 服务只提供固定的演示数据（不联网试用、自测），不要把它扩展成可配置的 Mock。
 
 ## 文档体系
 
@@ -60,6 +61,7 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
   - `cli` 和 `report` 只调用 `core`。
   - 以后加界面时也直接调用 `core.service`。
   - `result.json` 是对外的数据契约，必须保持稳定，有 JSON Schema 约束。
+  - `demo` 是独立的演示服务，不依赖 `core` / `cli` / `report`，`core` 也不依赖它。改了 `demo/data.py` 后同步 `doc/user/demo.md` 的接口表和 `tests/test_demo.py` 的预期 finding。
 - **默认只比较结构**：值只在显式配置（`on_value_change` 或 `compare: values`）时才比较。
 - **finding 和 warning 要分开**：finding 参与退出码计算，warning 不参与。
 - **对比引擎自己实现**：deepdiff 识别不了 `1.0` 和 `1.00` 的小数位差异，只在测试里用来做交叉校验。
@@ -111,5 +113,5 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
   - 例如实现 T1 时，T1 涉及的 spec 补充、代码、测试、`doc/` 更新整体作为一个提交。
   - 和这个功能无关的改动（例如顺手修正项目规则、无关的文档偏差）单独提交。
 - **提交前先跑检查**：radon、lint-imports、pytest 都要通过，不能提交跑不通的代码。
-- **不要提交**：运行输出（`api-regress-out/`）、快照数据、虚拟环境、含 token 的文件。
+- **不要提交**：运行输出（`api-regress-out/`）、`demo --write-suites` 写到根目录 `demo/` 的示例 suite、快照数据、虚拟环境、含 token 的文件。
 - 提交信息末尾加上 harness 要求的 Co-Authored-By 行。

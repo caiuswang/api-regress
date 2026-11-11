@@ -45,3 +45,15 @@ name = "core 不依赖 cli 和 report"
 type = "forbidden"
 source_modules = ["api_regress.core"]
 forbidden_modules = ["api_regress.cli", "api_regress.report"]
+
+[[tool.importlinter.contracts]]
+name = "demo 服务独立于 core、cli、report"
+type = "forbidden"
+source_modules = ["api_regress.demo"]
+forbidden_modules = ["api_regress.core", "api_regress.cli", "api_regress.report"]
+
+[[tool.importlinter.contracts]]
+name = "core 不依赖 demo"
+type = "forbidden"
+source_modules = ["api_regress.core"]
+forbidden_modules = ["api_regress.demo"]

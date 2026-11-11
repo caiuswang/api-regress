@@ -1,0 +1,79 @@
+# api-regress demo：基线 /v1，候选 /v2（故意改坏了几处），预期退出码 1
+# 先启动 demo 服务：api-regress demo
+# 端口不是 18765 时：DEMO_URL=http://127.0.0.1:<端口> api-regress run regress.yaml
+version: 1
+
+targets:
+  baseline:
+    base_url: "${DEMO_URL:-http://127.0.0.1:18765}/v1"
+  candidate:
+    base_url: "${DEMO_URL:-http://127.0.0.1:18765}/v2"
+
+defaults:
+  timeout: 5
+  success: "body.code == 0"
+  headers:
+    Accept: application/json
+  rules:
+    - path: "**.price"
+      decimal: {}
+    - path: "**.amount"
+      decimal: {}
+
+requests:
+  - name: health
+    method: HEAD
+    path: /health
+    success: null
+
+  # 删字段、加字段、小数位变化、对象变 null；分页列表用默认的 schema 模式
+  - name: product-list
+    method: GET
+    path: /products
+    query: { limit: "10" }
+    asserts:
+      - expr: "cand.body.data.total == base.body.data.total"
+        message: "商品总数变了"
+
+  # 固定订单：比金额的值，数组按 sku_id 对齐，coupon 允许为 null
+  - name: order-detail
+    method: GET
+    path: /orders/10086
+    rules:
+      - path: data.amount
+        on_value_change: breaking
+      - path: data.items
+        array: { keys: [sku_id] }
+      - path: data.coupon
+        nullable: true
+    asserts:
+      - expr: "cand.body.data.status == base.body.data.status"
+        level: breaking
+        message: "订单状态变了"
+      - expr: "all(x.price > 0 for x in cand.body.data['items'])"
+        message: "出现非正单价"
+
+  # 响应体本身是数组：用 $ 配 array；字段改名、少了一个用户
+  - name: users
+    method: GET
+    path: /users
+    success: null
+    rules:
+      - path: "$"
+        array: { keys: [id] }
+
+  # HTTP 200 但 code != 0：business_error
+  - name: inventory
+    method: GET
+    path: /inventory
+
+  # 候选返回 500：status_changed
+  - name: daily-report
+    method: GET
+    path: /reports/daily
+
+  # 响应头变化
+  - name: config
+    method: GET
+    path: /config
+    compare_headers: [X-Api-Version]

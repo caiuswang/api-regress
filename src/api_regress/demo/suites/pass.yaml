@@ -1,0 +1,78 @@
+# api-regress demo：两侧都是 /v1，预期全部通过（退出码 0）
+# 先启动 demo 服务：api-regress demo
+# 端口不是 18765 时：DEMO_URL=http://127.0.0.1:<端口> api-regress run pass.yaml
+version: 1
+
+targets:
+  baseline:
+    base_url: "${DEMO_URL:-http://127.0.0.1:18765}/v1"
+  candidate:
+    base_url: "${DEMO_URL:-http://127.0.0.1:18765}/v1"
+
+defaults:
+  timeout: 5
+  success: "body.code == 0"
+  headers:
+    Accept: application/json
+  rules:
+    - path: "**.price"
+      decimal: {}
+    - path: "**.amount"
+      decimal: {}
+    - path: "**.updated_at"   # 每次都变的字段先忽略；request_id、server_time 留给"建议 ignore"
+      ignore: true
+
+requests:
+  - name: health
+    method: HEAD
+    path: /health
+    success: null
+
+  - name: product-list
+    method: GET
+    path: /products
+    query: { limit: "10" }
+
+  - name: product-2
+    method: GET
+    path: /products/2
+    compare_headers: [Content-Type]
+    rules:
+      - path: data.price
+        on_value_change: breaking
+    asserts:
+      - expr: "scale(cand.body.data.price) == 2"
+        message: "价格不是两位小数"
+      - expr: "set(cand.body.data.tags) == set(base.body.data.tags)"
+
+  - name: order-detail
+    method: GET
+    path: /orders/10086
+    rules:
+      - path: data.items
+        array: { keys: [sku_id] }
+      - path: data.coupon
+        nullable: true
+
+  - name: users
+    method: GET
+    path: /users
+    success: null
+    rules:
+      - path: "$"
+        array: { keys: [id] }
+    asserts:
+      - expr: "len(cand.body) == len(base.body)"
+        level: breaking
+
+  # 两侧都 404：照常对比，提示测试数据可能失效
+  - name: order-not-found
+    method: GET
+    path: /orders/1
+    success: null
+
+  # 两侧都不是 JSON：unsupported，只比较状态码
+  - name: legacy
+    method: GET
+    path: /legacy
+    success: null

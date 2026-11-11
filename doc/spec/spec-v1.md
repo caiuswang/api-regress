@@ -54,6 +54,7 @@ api-regress 是一个 CLI 小工具，主要给 QA 做回归，开发也能用�
 
 ### 2.3 非目标（长期不做）
 - **不做接口管理平台**：不做 Apifox / Postman 那一套，包括登录流程、请求串联、变量提取、前后置脚本、Mock、接口文档。
+  内置的 `demo` 服务（§4.2）只提供固定的演示数据，不可配置，不算 Mock 功能（D19）。
 - **不做断言编辑器或界面**：`asserts` 和 `success` 只是 YAML 里的一行表达式，用于对比基线与候选、判断业务是否成功，不会发展成单接口断言平台。
 - **鉴权由使用者自理**：需要鉴权的接口，使用者先用自己的方式拿到 token，再通过 `${VAR}` 注入请求头。
 
@@ -78,6 +79,7 @@ api-regress run      <suite.yaml> [--out DIR] [--fail-on LEVEL] [--baseline-url 
 api-regress record   <suite.yaml> --snapshot DIR [--clean] [--baseline-url URL]
 api-regress compare  <suite.yaml> --snapshot DIR [--out DIR] [--fail-on LEVEL] [--candidate-url URL]
 api-regress accept   <run-dir> --snapshot DIR
+api-regress demo     [--host HOST] [--port PORT] [--write-suites DIR]
 ```
 
 **通用参数**
@@ -99,6 +101,7 @@ api-regress accept   <run-dir> --snapshot DIR
 | `record` | 只需要 baseline | 每条请求串行请求 2 次，**按请求合并**写入快照。失败的请求保留旧 sample；`--clean` 会先清空快照 | 写入数、未写入的请求及原因、**不稳定字段建议** | 0 / 2 / 3 / 4 |
 | `compare` | 只需要 candidate | 基线读快照，候选请求 1 次，然后对比 | 同 `run` | 0 / 1 / 2 / 3 / 4 |
 | `accept` | 无 | 把 run 目录里的候选响应**按请求合并**进快照，见 §8.3 | 接受数、被拒的请求及原因 | 0 / 3 / 4 |
+| `demo` | 无 | 启动本地演示服务，或用 `--write-suites` 写出示例 suite，见 §4.2 | 服务地址；写出的文件 | 0 / 2 / 3 |
 
 **退出码定义**
 
@@ -111,6 +114,17 @@ api-regress accept   <run-dir> --snapshot DIR
 | 4 | 至少有一条请求是 `error` 或 `inconclusive`（record / accept 指：至少有一条请求没写入），并且没有触发 1 |
 
 多个条件同时满足时，按 **2 > 3 > 1 > 4 > 0** 取值。单条请求出问题不会中断整个运行。warning 不影响退出码。
+
+### 4.2 demo 服务
+
+用于不联网试用和自测（D19）。
+
+- **数据固定、不可配置**：`/v1/...` 是基线，`/v2/...` 是候选；v2 故意改坏几处，覆盖 `field_removed`、`field_added`、`type_changed`、`scale_changed`、`value_changed`、`element_missing`、`business_error`、`status_changed`、`header_changed`、`assert_failed`。另提供不比较的辅助接口：指定状态码、延迟返回、纯文本。
+- **只用标准库**，只响应 GET / HEAD；HEAD 只回状态码，不带 body 和 Content-Type。数字按原文输出（保留 `12.50` 的末尾 0）。
+- **参数**：`--host` 默认 `127.0.0.1`；`--port` 默认 `18765`，`0` 表示随机；端口被占用时报错，退出码 3（不开 `SO_REUSEADDR`，否则 macOS 上会和占用通配地址的进程同时绑定成功）。Ctrl+C 停止，退出码 0。
+- **`--write-suites DIR`**：写出 `pass.yaml`（两侧都是 `/v1`，预期退出码 0）和 `regress.yaml`（`/v1` 对 `/v2`，预期退出码 1）后退出，不启动服务；已有同名文件时一个都不写，按参数错误处理，退出码 2。suite 的地址写成 `${DEMO_URL:-http://127.0.0.1:18765}`。
+- **日志**：每个请求一行 INFO，只有请求行和状态码，不记请求头。
+- **分层**：`demo` 包不依赖 `core`、`cli`、`report`，`core` 也不依赖 `demo`（import-linter 契约）。
 
 ## 5. 配置格式（suite.yaml）
 
@@ -642,6 +656,7 @@ snapshot/
 |---|---|
 | AC-35 | INFO 日志包含 §10 列出的全部节点。在请求头里放一个哨兵 token，它不会出现在 stderr、日志文件、快照、run 目录和报告的任何地方 |
 | AC-36 | `radon cc -n C src/` 没有输出；`src/` 下没有超过 1000 行的文件；import-linter 检查通过 |
+| AC-37 | 启动 demo 服务后，`pass.yaml` 退出码 0、没有 finding；`regress.yaml` 退出码 1，§4.2 列出的每种 finding 都出现在预期的请求和路径上；端口被占用时报错；`--write-suites` 不覆盖已有文件 |
 
 ## 13. 决策记录与待定问题
 
@@ -665,3 +680,4 @@ snapshot/
 | D16 | 表达式里布尔值、生成器、`base`/`cand` 的语义 | 按 JSON 类型运算：布尔值不是数字（`false == 0` 为假，算术和比较大小报错）；生成器只能作为 `all`/`any`/`set`/`min`/`max` 的唯一参数；`base`/`cand` 不能直接参与运算（§7.7）（已确认，2026-11-10） |
 | D17 | 实现 `run` 时补齐的细节：`unsupported` 仍比较状态码；"HEAD 或 204"的判定；响应头新出现记 suspicious，Content-Type 只改参数不报；URL 拼接与请求头合并顺序；`body_kind_changed` 的伪路径 `$body`；`--only` 未知 name 和非法覆盖地址按参数错误；run 目录格式与复用规则；取消；未命中规则的统计范围（§7.2、§6.2、§9） | 已确认（2026-11-11） |
 | D18 | `run` 的安全与健壮性（T4 code review 后补充）：`base_url` 不能带 userinfo；`timeout` 是单次请求的总时限；网络错误原因不带请求头的值；`--out` 先检查、只复用 api-regress 写的 run 目录、日志文件不算无关文件、写入失败时退出码和原因一致；取消对排队中的请求生效；单条请求的意外异常不中断运行、退出码 3（§7.2、§9） | 已确认（2026-11-11） |
+| D19 | 内置 `demo` 演示服务，方便不联网试用（用户提出，2026-11-11）。和非目标里的 Mock 的区别：数据固定、不可配置，只用于演示和自测（§2.3、§4.2） | 已确认（2026-11-11） |
