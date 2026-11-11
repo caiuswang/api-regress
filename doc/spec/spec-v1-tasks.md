@@ -29,7 +29,7 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 | T2 | 已完成 | jsonload / diff | 04–09, 16–21 | 表驱动单元测试 |
 | T3 | 已完成 | expr | 24, 25 | 单元测试，含恶意用例 |
 | T4 | 已完成 | runner / status / service / run | 10–15, 23, 30, 31, 34, 35 | mock 服务集成测试 |
-| T5 | 未开始 | snapshot / record / compare / accept | 03, 26–29 | mock 服务集成测试 |
+| T5 | 待 review | snapshot / record / compare / accept | 03, 26–29 | mock 服务集成测试 |
 | T6 | 未开始 | report / 文档 | 32, 33, 36（全部通过） | 快照测试 + 解析校验 |
 | T7 | 已完成 | demo / `demo` 命令 | 37 | 真实本地服务集成测试 |
 
@@ -153,7 +153,7 @@ T2 和 T3 可以并行做，T5 和 T6 也可以并行做。
 | K13 | run 的 warning 没按 design §6 记 WARNING 日志 | 日志里看不到提示 | `evaluate` 结束时逐条记 WARNING |
 | K14 | `--only`、覆盖地址出错时不显示用法 | 体验问题 | 和其他参数错误一致 |
 | K15 | `result.json` Schema 里 `finding_id` 是可选字段 | 契约不够严格 | 改为必填，重新导出 Schema |
-| K16 | `samples.from_record` 遇到坏数据抛 `TypeError` / `ValueError` | T5 读快照时报错类型不统一 | 统一包成 `SampleFormatError` |
+| K16 | `samples.from_record` 遇到坏数据抛 `TypeError` / `ValueError` | T5 读快照时报错类型不统一 | 统一包成 `SampleFormatError`（已在 T5 修复） |
 | K17 | run.md 写"出错的请求不计入未命中统计"，和实现的口径（至少一侧有 JSON body）不完全一致 | 文档偏差 | 对齐文档 |
 | K18 | 代码重复：cli 和 result 各有一份退出码常量；`_print_issues` 和 `_print_validation` 重叠；`_SIDE_NAME` 重复、"baseline 的响应"和"基线"混用；`REQUEST_STATUSES`、`LEVELS` 未使用；`run_exit_state` 重复统计；`_response_headers` 等价于 `dict(response.headers)`；测试夹具重复 | 维护成本 | 顺手清理 |
 | K19 | 解析后的 body 在整个运行期间都留在内存里；`evaluate` 在事件循环上跑，拉高其他请求的 `elapsed_ms` | 大 suite 内存和耗时偏高 | 用完即丢；对比放到线程里 |
