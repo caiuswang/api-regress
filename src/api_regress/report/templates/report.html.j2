@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d0d7de; --panel: #f6f8fa;
+  --breaking: #cf222e; --suspicious: #9a6700; --info: #0969da; --ok: #1a7f37;
+  --add: #dafbe1; --chg: #fff8c5; --sub: #ffebe9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #8d96a0; --line: #30363d; --panel: #161b22;
+    --breaking: #ff7b72; --suspicious: #d29922; --info: #58a6ff; --ok: #3fb950;
+    --add: #12361f; --chg: #3b2e05; --sub: #4c1a1d;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+       font: 14px/1.5 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 20px; margin: 0 0 4px; word-break: break-all; }
+h2 { font-size: 17px; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+h3 { font-size: 15px; margin: 0; display: inline; }
+.meta, .muted { color: var(--muted); }
+.exit { margin: 16px 0; padding: 12px 16px; border-radius: 6px; background: var(--panel);
+        border-left: 4px solid var(--ok); font-weight: 600; }
+.exit.fail { border-left-color: var(--breaking); }
+.cells { display: flex; flex-wrap: wrap; gap: 8px; }
+.cells div { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; min-width: 88px; }
+.cells b { display: block; font-size: 18px; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+th, td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: var(--panel); font-weight: 600; }
+td.v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px;
+      overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin: 4px 0; }
+.wrap { overflow-x: auto; }
+.lv { font-weight: 600; }
+.lv-breaking, .st-error, .st-inconclusive { color: var(--breaking); }
+.lv-suspicious { color: var(--suspicious); }
+.lv-info { color: var(--info); }
+.st-ok { color: var(--ok); }
+.st-unsupported { color: var(--muted); }
+details.req { border: 1px solid var(--line); border-radius: 6px; margin: 12px 0; }
+details.req > summary { cursor: pointer; padding: 8px 12px; background: var(--panel); border-radius: 6px; }
+details.req[open] > summary { border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0; }
+.body { padding: 8px 12px 12px; }
+.reason { margin: 8px 0; }
+table.diff { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid var(--line); }
+table.diff td { border: none; padding: 0 4px; white-space: pre-wrap; word-break: break-all; }
+table.diff th.diff_header { text-align: center; }
+td.diff_header { color: var(--muted); text-align: right; }
+.diff_next { display: none; }
+.diff_add { background: var(--add); }
+.diff_chg { background: var(--chg); }
+.diff_sub { background: var(--sub); }
+a { color: var(--info); }
+</style>
+</head>
+<body>
+<main>
+<h1>{{ title }}</h1>
+<div class="meta">{{ result.started_at.strftime("%Y-%m-%d %H:%M:%S") }} – {{ result.finished_at.strftime("%H:%M:%S") }}
+  · --fail-on {{ result.fail_on }} · api-regress {{ result.tool_version }}{% if result.cancelled %} · <b>已取消</b>{% endif %}</div>
+
+<h2>汇总</h2>
+<div class="exit{% if result.exit_code != 0 %} fail{% endif %}">退出码 {{ result.exit_code }}：{{ result.exit_reason }}</div>
+<div class="cells">
+{% for name, n in cells %}
+  <div><span class="muted">{{ name }}</span><b>{{ n }}</b></div>
+{% endfor %}
+</div>
+
+<div class="wrap">
+<table>
+<tr><th>请求</th><th>方法 / 路径</th><th>状态</th><th>状态码</th><th>breaking</th><th>suspicious</th><th>info</th></tr>
+{% for v in requests %}
+<tr>
+  <td><a href="#{{ v.anchor }}">{{ v.req.name }}</a></td>
+  <td><code>{{ v.req.method }} {{ v.path }}</code></td>
+  <td class="st-{{ v.req.status }}">{{ v.req.status }}</td>
+  <td>{{ v.codes }}</td>
+  {% for level in ("breaking", "suspicious", "info") %}
+  {% set n = v.req.findings | selectattr("level", "equalto", level) | list | length %}
+  <td{% if n %} class="lv lv-{{ level }}"{% endif %}>{{ n }}</td>
+  {% endfor %}
+</tr>
+{% endfor %}
+</table>
+</div>
+
+<h2>各请求详情</h2>
+{% for v in requests %}
+<details class="req" id="{{ v.anchor }}"{% if v.req.findings or v.req.status not in ("ok", "unsupported") %} open{% endif %}>
+<summary><h3>{{ v.req.name }}</h3> <code>{{ v.req.method }} {{ v.path }}</code> · {{ v.codes }} ·
+  <span class="st-{{ v.req.status }}">{{ v.req.status }}</span>{% if v.req.findings %} · {{ v.req.findings | length }} 条 finding{% endif %}</summary>
+<div class="body">
+{% if v.req.reason %}<div class="reason">原因：{{ v.req.reason }}</div>{% endif %}
+{% if v.req.snapshot_problem %}<div class="reason">快照：{{ v.req.snapshot_problem }}</div>{% endif %}
+
+{% if v.sides %}
+<div class="wrap">
+<table>
+<tr><th></th><th>URL</th><th>状态码</th><th>耗时</th><th>重试</th></tr>
+{% for s in v.sides %}
+<tr><td>{{ SIDE_TEXT[s.side] }}</td><td class="v">{{ s.url }}</td>
+  <td>{{ s.status if s.status is not none else ("错误：" ~ s.error) }}</td><td>{{ s.elapsed_ms | elapsed }}</td><td>{{ s.retries }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% for s in v.sides %}
+<div class="muted">复现（{{ SIDE_TEXT[s.side] }}，请求头的值需自行填入）：</div>
+<pre>{{ s.curl }}</pre>
+{% endfor %}
+{% endif %}
+
+{% if v.findings %}
+<div class="wrap">
+<table>
+<tr><th>级别</th><th>类型</th><th>路径</th><th>泛化路径</th><th>基线</th><th>候选</th><th>命中的规则</th></tr>
+{% for f in v.findings %}
+<tr>
+  <td class="lv lv-{{ f.level }}">{{ f.level }}</td>
+  <td>{{ f.type }}{% if f.message %}<div class="muted">{{ f.message }}</div>{% endif %}</td>
+  <td class="v">{{ f.path }}</td>
+  <td class="v">{{ f.generalized_path }}</td>
+  <td class="v">{{ f.base }}</td>
+  <td class="v">{{ f.cand }}</td>
+  <td class="v">{{ f.rules }}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if v.req.warnings %}
+<ul>
+{% for w in v.req.warnings %}<li><code>{{ w.code }}</code> {{ w.message }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+{% if v.diff %}
+<div class="muted">body 对照（只显示有差异的行及上下文）{% if v.diff.note %}：{{ v.diff.note }}{% endif %}</div>
+{% if v.diff.table %}<div class="wrap">{{ v.diff.table }}</div>{% endif %}
+{% endif %}
+</div>
+</details>
+{% endfor %}
+
+<h2>建议 ignore</h2>
+{% if suggestions %}
+<p class="muted">基线两次请求结果不同的字段。不会自动生效；确认是不稳定字段后，把片段加进对应请求或 defaults 的 rules。</p>
+{% for name, s in suggestions %}
+<div><b>{{ name }}</b>：<code>{{ s.path }}</code>（{{ s.reason }}）</div>
+<pre>{{ s.yaml }}</pre>
+{% endfor %}
+{% else %}
+<p class="muted">无</p>
+{% endif %}
+
+<h2>本次未命中的规则</h2>
+{% if unmatched %}
+<p class="muted">在本次请求的 body 里一个路径都没匹配到（不一定是过期了）。</p>
+<ul>{% for item in unmatched %}<li><code>{{ item }}</code></li>{% endfor %}</ul>
+{% else %}
+<p class="muted">无</p>
+{% endif %}
+
+<h2>warning</h2>
+{% if warnings %}
+<ul>{% for w in warnings %}<li><code>{{ w.code }}</code> {{ w.request }}：{{ w.message }}</li>{% endfor %}</ul>
+{% else %}
+<p class="muted">无</p>
+{% endif %}
+</main>
+</body>
+</html>

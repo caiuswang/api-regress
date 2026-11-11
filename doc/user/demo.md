@@ -32,6 +32,8 @@ api-regress run demo/pass.yaml      # 两侧都是 /v1：全部通过，退出�
 api-regress run demo/regress.yaml   # /v1 对 /v2：有 breaking，退出码 1
 ```
 
+stdout 的 `reports:` 行给出报告路径，用浏览器打开 `report.html` 就能看到每处改动，怎么看见 [report.md](report.md)。
+
 端口不是 18765 时，suite 通过 `DEMO_URL` 取地址：
 
 ```bash

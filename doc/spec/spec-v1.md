@@ -88,7 +88,7 @@ api-regress demo     [--host HOST] [--port PORT] [--write-suites DIR]
 - `--only NAME`：可以重复，只处理指定的请求。
 - `--log-level`：默认 INFO。
 - `--log-file`
-- `--format html,md,junit`：默认全部输出；`result.json` 总会输出。
+- `--format html,md,junit`（只对 `run`、`snapshot compare` 有效）：默认全部输出；`result.json` 总会输出。可以逗号分隔，也可以重复（`--format md --format junit`，和 `--only` 一样），重复的只算一次；`--format none` 只输出 `result.json`。取值不在这几个里、为空、或 `none` 和其他格式一起用时按参数错误处理，退出码 2（D22）。
 
 **参数取值**
 - `--fail-on`：`breaking`（默认）/ `suspicious` / `info` / `never`
@@ -499,7 +499,7 @@ snapshot/
 |---|---|
 | `report.html` | 单个文件，不依赖外部资源；响应内容一律转义 |
 | `report.md` | 适合贴到 PR 或 IM |
-| `junit.xml` | 每条请求是一个 testcase：有达到 `--fail-on` 级别的 finding 记 failure；`error` 或 `inconclusive` 记 error |
+| `junit.xml` | 每条请求是一个 testcase：有达到 `--fail-on` 级别的 finding 记 failure；否则 `error` 或 `inconclusive` 记 error；`unsupported` 记 skipped（D22） |
 | `result.json` | 结构化结果，契约见 design §4，供以后的界面使用 |
 | `baseline/`、`candidate/` | 两侧响应。`candidate/` 给 `accept` 用，`baseline/` 用于排查 |
 
@@ -527,6 +527,9 @@ snapshot/
 - **取消**（`cancel_event`）：已经发出的请求会跑完；还没开始的请求（包括在排队等并发名额的）记为 `error`（原因"运行已取消"），`result.json` 里 `cancelled` 为真（D18）。
 - **单条请求出了工具自身的错误**（意外异常）：这条记为 `error`，原因写异常类型，其他请求照常，`result.json` 照常写，退出码 3。进度回调抛异常同样记为退出码 3，不中断运行（D18）。
 - **本次未命中的规则**：只统计至少有一侧拿到 JSON body 的请求。defaults 里的规则在所有这些请求里都没命中才列出（只列一次）；请求级规则按请求列出。
+- **报告的写入**（D22）：顺序是两侧响应 → 报告 → `result.json`（最后写）。报告先全部在内存里生成：某个报告生成失败时，退出码改成 3（原因写明是哪个报告），其余报告按改过的结果重新生成，所以写出的报告、`result.json` 和进程的退出码一致。写文件失败（例如磁盘满）时删掉本次已经写出的报告，不写 `result.json`，退出码 3。
+- **复用 run 目录**（D22）：先删掉旧的 `result.json`，再删两侧响应和旧报告（`report.html`、`report.md`、`junit.xml`）。这样本次中途失败或被打断时，目录里没有 `result.json`，不会出现旧结果配新响应、被 `accept` 误用的情况。没有 `result.json`、只有两侧目录（里面只有 `.json` 文件）和报告的目录，视为上次中断留下的 run 目录，可以复用。
+- **报告里怎么展示**（D22）：Markdown 只展开有 finding 或状态不是 `ok` 的请求（`unsupported` 也展开，附原因），其余合成一行，表格和列表里转义 `|`、`*`、`_` 等 Markdown 符号；HTML 全部列出，有问题的默认展开。schema 数组 finding 两侧的集合写成 `{null, object}`、`小数位 {1, 2}`；字段缺失写 `(缺失)`；字符串加引号，数字按原文小数位（对象、数组里嵌套的数字也一样）。curl 只带 suite 里配置的请求头名字，值写 `<redacted>`。
 
 ## 10. 非功能需求
 - **语言与协议**：Python 3.12；配置用 YAML；外部交互只走 HTTP/HTTPS。
@@ -706,4 +709,5 @@ snapshot/
 | D18 | `run` 的安全与健壮性（T4 code review 后补充）：`base_url` 不能带 userinfo；`timeout` 是单次请求的总时限；网络错误原因不带请求头的值；`--out` 先检查、只复用 api-regress 写的 run 目录、日志文件不算无关文件、写入失败时退出码和原因一致；取消对排队中的请求生效；单条请求的意外异常不中断运行、退出码 3（§7.2、§9） | 已确认（2026-11-11） |
 | D19 | 内置 `demo` 演示服务，方便不联网试用（用户提出，2026-11-11）。和非目标里的 Mock 的区别：数据固定、不可配置，只用于演示和自测（§2.3、§4.2） | 已确认（2026-11-11） |
 | D20 | 实现 T5 时补齐的快照细节：manifest 字段与版本处理、快照目录的保护与 `--clean`、原子替换的残留恢复；record 只对基线按 §7.2 判定，`unsupported` 也写入，第 2 个 sample 不可用时只写 1 个，一条都没写入时（含 `--clean`）不改动快照；compare 只读，不清理残留；compare 在快照缺失时仍请求候选并写 run 目录；accept 按 record 的标准检查候选（候选 5xx 也拒绝），判定信息来自 `result.json` 新增的 `snapshot_problem`、`candidate_success`；accept 的 `--only` 未知 name 退出码 2（§4.1、§8） | 待确认（2026-11-11） |
+| D22 | 实现 T6 时补齐的报告细节：`--format` 只对 `run` / `snapshot compare` 有效，可重复，`none` 只输出 `result.json`，非法取值退出码 2；junit 里 `unsupported` 记 skipped，failure 优先于 error；报告先在内存里全部生成再写，生成失败退出码 3 且其余报告和 `result.json` 的退出码一致，写文件失败删掉本次的报告、不写 `result.json`；`result.json` 最后写，复用 run 目录时先删旧的 `result.json` 和旧报告，中断留下的目录可以复用；Markdown 展开有问题的请求（含 `unsupported`）（§4、§9）。T6 code review 后修订（2026-11-11） | 待确认（2026-11-11） |
 | D21 | 快照相关命令收进 `snapshot` 命令组（用户提出，2026-11-11）：`record` / `compare` / `accept` 和 `run` 并列在顶层，用户分不清哪个是实时对比、哪个和快照有关。改为 `snapshot record` / `snapshot compare` / `snapshot accept`，快照目录参数从 `--snapshot` 改为 `-d` / `--dir`；不保留旧的顶层命令（v1 未发布）。`result.json` 的 `command` 仍是 `run` / `compare`，manifest 的 `source` 仍是 `record` / `accept`（§4） | 已确认（2026-11-11） |

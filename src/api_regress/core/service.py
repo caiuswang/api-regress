@@ -14,7 +14,7 @@ import httpx
 from pydantic import BaseModel
 
 from api_regress import __version__
-from api_regress.core import accept as acceptance, expr, rundir, snapshot
+from api_regress.core import accept as acceptance, expr, reportdata, rundir, snapshot
 from api_regress.core.config import (
     ConfigError,
     ConfigIssue,
@@ -249,6 +249,8 @@ class RunOptions(BaseModel):
     only: list[str] = []
     log_file: Path | None = None
     """日志文件。放在 run 目录里时不算作无关文件。"""
+    reporters: list[reportdata.Reporter] = []
+    """要生成的报告（core 不依赖 report，由调用方传入）。先全部在内存里渲染，确定退出码后再写文件。"""
 
 
 class CompareOptions(RunOptions):
@@ -262,6 +264,7 @@ class RunReport(CommandReport):
 
     result: RunResult | None = None
     out_dir: str | None = None
+    reports: list[str] = []
 
 
 def _unmatched(suite: Suite, executed: list[Executed]) -> list[UnmatchedRule]:
@@ -284,7 +287,7 @@ def _unmatched(suite: Suite, executed: list[Executed]) -> list[UnmatchedRule]:
     return head + out
 
 
-def _write_run_dir(out: Path, executed: list[Executed], result: RunResult, ignore: list[Path]) -> None:
+def _write_sides(out: Path, executed: list[Executed], ignore: list[Path]) -> None:
     rundir.prepare(out, ignore)
     for item in executed:
         name, fp, keep = item.plan.name, item.plan.fingerprint, item.plan.request.compare_headers
@@ -292,7 +295,66 @@ def _write_run_dir(out: Path, executed: list[Executed], result: RunResult, ignor
             log.info("写入 %s", rundir.write_side(out, "baseline", name, fp, item.base_samples, keep))
         if item.cand is not None:
             log.info("写入 %s", rundir.write_side(out, "candidate", name, fp, [item.cand], keep))
-    rundir.write_result(out, result)
+
+
+def _render(reporters: list[reportdata.Reporter], data: reportdata.ReportInput
+            ) -> tuple[list[tuple[reportdata.Reporter, bytes]], list[tuple[reportdata.Reporter, str]]]:  # fmt: skip
+    """只在内存里渲染，不写文件。返回 (渲染好的, 出错的及原因)。"""
+    rendered: list[tuple[reportdata.Reporter, bytes]] = []
+    failed: list[tuple[reportdata.Reporter, str]] = []
+    for reporter in reporters:
+        try:
+            rendered.append((reporter, reporter.render(data)))
+        except Exception as exc:  # 一个报告出错不影响其他报告和 result.json，只让退出码变成 3
+            log.exception("生成报告 %s 失败", reporter.filename)
+            failed.append((reporter, f"{reporter.filename}：{type(exc).__name__}: {exc}"))
+    return rendered, failed
+
+
+def _with_internal_error(result: RunResult, detail: str) -> RunResult:
+    code, reason = exit_code(ExitState(internal_error=True))
+    return result.model_copy(update={"exit_code": code, "exit_reason": f"{reason}：{detail}"})
+
+
+def _render_reports(reporters: list[reportdata.Reporter], data: reportdata.ReportInput
+                    ) -> tuple[list[tuple[reportdata.Reporter, bytes]], RunResult]:  # fmt: skip
+    """渲染全部报告并确定最终结果：有报告出错时退出码改成 3，其余报告用改过的结果重新渲染，
+    这样写出的报告和 result.json 的退出码一致。每轮至少去掉一个出错的报告，所以一定会结束。"""
+    pending, problems = list(reporters), []
+    while True:
+        rendered, failed = _render(pending, data)
+        if not failed:
+            return rendered, data.result
+        problems += [problem for _, problem in failed]
+        pending = [r for r in pending if r not in {reporter for reporter, _ in failed}]
+        result = _with_internal_error(data.result, f"无法生成报告（{'；'.join(problems)}）")
+        data = replace(data, result=result)
+
+
+def _write_outputs(out: Path, rendered: list[tuple[reportdata.Reporter, bytes]], result: RunResult) -> list[str]:
+    """先写报告，最后写 result.json：中途失败或被打断时没有 result.json，accept 不会读到和两侧响应对不上的结果。
+    写入失败时删掉本次已经写出的报告，免得留下和退出码对不上的报告。"""
+    written: list[Path] = []
+    try:
+        for reporter, content in rendered:
+            path = out / reporter.filename
+            path.write_bytes(content)
+            written.append(path)
+            log.info("写入 %s", path)
+        rundir.write_result(out, result)
+    except OSError:
+        for path in written:
+            path.unlink(missing_ok=True)
+        raise
+    return [str(path) for path in written]
+
+
+def _report_input(suite: Suite, out: Path, executed: list[Executed], result: RunResult) -> reportdata.ReportInput:
+    extras = {
+        item.plan.name: reportdata.extras_for(suite, item.plan.request, item.base_samples, item.cand)
+        for item in executed
+    }
+    return reportdata.ReportInput(result=result, out_dir=out, extras=extras)
 
 
 def _log_summary(result: RunResult) -> None:
@@ -319,14 +381,26 @@ def _finish(command: Mode, source: str, options: RunOptions, out: Path, executed
     )  # fmt: skip
     _log_summary(result)
     try:
-        _write_run_dir(out, executed, result, _ignored(options))
+        _write_sides(out, executed, _ignored(options))
     except OSError as exc:
-        report = _internal_error(command, source, f"无法写入 run 目录 {out}（{exc}）", RunReport).report
-        assert isinstance(report, RunReport)
-        report.result = result.model_copy(update={"exit_code": report.exit_code, "exit_reason": report.exit_reason})
-        return report
+        return _write_failed(command, source, f"无法写入 run 目录 {out}（{exc}）", result)
+    rendered, result = _render_reports(options.reporters, _report_input(suite, out, executed, result))
+    code, reason = result.exit_code, result.exit_reason
+    try:
+        reports = _write_outputs(out, rendered, result)
+    except OSError as exc:
+        return _write_failed(command, source, f"无法写入 run 目录 {out}（{exc}）", result)
     _finish_log(command, code, reason)
-    return RunReport(source=source, exit_code=code, exit_reason=reason, result=result, out_dir=str(out))
+    return RunReport(
+        source=source, exit_code=code, exit_reason=reason, result=result, out_dir=str(out), reports=reports
+    )
+
+
+def _write_failed(command: Mode, source: str, detail: str, result: RunResult) -> RunReport:
+    report = _internal_error(command, source, detail, RunReport).report
+    assert isinstance(report, RunReport)
+    report.result = result.model_copy(update={"exit_code": report.exit_code, "exit_reason": report.exit_reason})
+    return report
 
 
 def _compare_snapshot(source: str, options: CompareOptions, names: list[str]) -> snapshot.Snapshot:

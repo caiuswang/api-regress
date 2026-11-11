@@ -4,7 +4,7 @@
 
 ```
 api-regress snapshot record  <suite.yaml> -d DIR [--clean] [--baseline-url URL] [--only NAME ...]
-api-regress snapshot compare <suite.yaml> -d DIR [--out DIR] [--fail-on LEVEL] [--candidate-url URL] [--only NAME ...]
+api-regress snapshot compare <suite.yaml> -d DIR [--out DIR] [--fail-on LEVEL] [--format FORMATS] [--candidate-url URL] [--only NAME ...]
 api-regress snapshot accept  <run-dir>    -d DIR [--only NAME ...]
 ```
 
@@ -54,7 +54,7 @@ exit 4: 1 条请求没有写入快照
 
 ## compare：和快照对比
 
-基线读快照，候选请求 1 次，然后和 `run` 一样逐条对比，输出格式、run 目录、`result.json`、退出码都和 [run.md](run.md) 相同（`result.json` 的 `command` 为 `compare`）。快照里有 2 个 sample 时照常给出不稳定字段建议；`accept` 进来的请求只有 1 个 sample，没有建议。
+基线读快照，候选请求 1 次，然后和 `run` 一样逐条对比，输出格式、run 目录、`result.json`、报告（`--format`，见 [report.md](report.md)）、退出码都和 [run.md](run.md) 相同（`result.json` 的 `command` 为 `compare`）。快照里有 2 个 sample 时照常给出不稳定字段建议；`accept` 进来的请求只有 1 个 sample，没有建议。
 
 每条请求先看快照：
 
@@ -106,7 +106,7 @@ exit 4: 1 条请求没有写入快照
 | 0 | 全部写入 | 同 `run` | 全部接受 |
 | 1 | — | 存在达到 `--fail-on` 级别的 finding | — |
 | 2 | suite 有问题、缺基线的环境变量、`--only` 的 name 不存在、覆盖地址不合法、快照版本不兼容 | 同左（缺候选的环境变量） | `--only` 的 name 在 run 目录里不存在、快照版本不兼容 |
-| 3 | 快照目录不能用、快照损坏、写入失败、内部错误 | 快照目录不能用、快照损坏、`--out` 不能用、写 run 目录失败 | run 目录不是 api-regress 写的或损坏、快照目录不能用、快照损坏、写入失败 |
+| 3 | 快照目录不能用、快照损坏、写入失败、内部错误 | 快照目录不能用、快照损坏、`--out` 不能用、写 run 目录或报告失败 | run 目录不是 api-regress 写的或损坏、快照目录不能用、快照损坏、写入失败 |
 | 4 | 至少有一条请求没有写入 | 至少有一条请求是 `error` 或 `inconclusive` | 至少有一条请求被拒绝 |
 
 同时满足多个时按 **2 > 3 > 1 > 4 > 0** 取值。快照目录不能用、损坏、版本不兼容都在**发请求之前**检查，一个请求都不会发。

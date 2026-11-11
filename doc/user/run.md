@@ -1,8 +1,8 @@
 # run：两侧实时请求并对比
 
 ```
-api-regress run <suite.yaml> [--out DIR] [--fail-on LEVEL] [--baseline-url URL] [--candidate-url URL]
-                             [--only NAME ...] [--log-level LEVEL] [--log-file FILE]
+api-regress run <suite.yaml> [--out DIR] [--fail-on LEVEL] [--format FORMATS] [--baseline-url URL]
+                             [--candidate-url URL] [--only NAME ...] [--log-level LEVEL] [--log-file FILE]
 ```
 
 基线和候选都在线时用（例如预发和生产）。只有一个环境时，用 `snapshot record` 录快照、`snapshot compare` 和快照对比，见 [snapshot.md](snapshot.md)；`snapshot compare` 的流程、输出和退出码与本页相同。每条请求：**基线串行请求 2 次，候选请求 1 次**，用基线的第 1 次和候选对比，基线的第 2 次只用来找不稳定的字段。
@@ -11,12 +11,11 @@ api-regress run <suite.yaml> [--out DIR] [--fail-on LEVEL] [--baseline-url URL] 
 |---|---|
 | `--out DIR` | run 目录，默认 `./api-regress-out/<YYYYmmdd-HHMMSS>/`（同一秒内重复运行时加 `-2`、`-3`） |
 | `--fail-on LEVEL` | `breaking`（默认）/ `suspicious` / `info` / `never`：有达到这一级的 finding 时退出码为 1 |
+| `--format FORMATS` | 报告格式，`html`、`md`、`junit` 用逗号分隔，默认全部；`result.json` 总会输出。写错时退出码 2。报告怎么看见 [report.md](report.md) |
 | `--baseline-url` / `--candidate-url` | 覆盖 suite 里对应一侧的 `base_url`，必须是 `http://` 或 `https://` 开头，不能带用户名或密码 |
 | `--only NAME` | 只跑指定的请求，可以写多次；name 不存在时报错，退出码 2 |
 
 `run` 需要两侧的环境变量：`targets.baseline`、`targets.candidate`、`defaults`、`requests` 里引用的变量缺一个就报错（退出码 2），并指出所在行。
-
-> 目前只输出 `result.json` 和两侧响应；HTML、Markdown、JUnit 报告还没有实现。
 
 ## 请求怎么发
 
@@ -115,6 +114,7 @@ findings: breaking 1 | suspicious 0 | info 1
   order-list: inconclusive（候选返回 401，检查候选的 token 或限流）
 warnings 0 | 建议 ignore 1 | 本次未命中的规则 0
 result: api-regress-out/20261111-101500/result.json
+reports: api-regress-out/20261111-101500/report.html, api-regress-out/20261111-101500/report.md, api-regress-out/20261111-101500/junit.xml
 exit 1: 存在 1 条达到 breaking 级别的 finding
 ```
 
@@ -127,7 +127,7 @@ exit 1: 存在 1 条达到 breaking 级别的 finding
 | 0 | 没有达到 `--fail-on` 的 finding，所有请求都是 `ok` 或 `unsupported` |
 | 1 | 存在达到 `--fail-on` 级别的 finding |
 | 2 | suite 有问题（不合法、缺环境变量、写方法、表达式不合法），或者命令行参数写错（`--only` 的 name 不存在、覆盖的地址不合法） |
-| 3 | 工具自身出错：`--out` 不能用、无法写入 run 目录、内部异常 |
+| 3 | 工具自身出错：`--out` 不能用、无法写入 run 目录或报告、内部异常 |
 | 4 | 至少有一条请求是 `error` 或 `inconclusive`，并且没有触发 1 |
 
 同时满足多个时按 **2 > 3 > 1 > 4 > 0** 取值。例如既有 breaking 又有 error 时为 1。
@@ -137,14 +137,15 @@ exit 1: 存在 1 条达到 breaking 级别的 finding
 | 文件 | 内容 |
 |---|---|
 | `result.json` | 结构化结果，字段见下文 |
+| `report.html`、`report.md`、`junit.xml` | 报告，按 `--format` 输出，见 [report.md](report.md) |
 | `baseline/<name>.json` | 基线的 2 个 sample（`compare` 时是快照里的 1–2 个；快照里没有这条请求时不写） |
 | `candidate/<name>.json` | 候选的 1 个 sample，`snapshot accept` 从这里读 |
 
 每个 sample 记录 URL、状态码、`Content-Type` 和 `compare_headers` 列出的响应头、body 原文（不是 UTF-8 时存 base64，字段名 `body_b64`）、耗时、重试次数；网络错误的 sample 只有 URL、错误原因和重试次数。**请求头一律不保存**，所以 token 不会落盘；其他响应头（如 `Set-Cookie`）也不保存。但响应体原样保存，不要把 run 目录提交或上传到公开的地方。
 
-`--out` 指向已存在的非空目录时，只有它是之前的 run 目录（里面的 `result.json` 是 api-regress 写的）才会复用（先清掉旧的 `baseline/`、`candidate/`）；否则拒绝写入，退出码 3，以免把文件混进无关的目录或删掉别人的文件。`--log-file` 放在 `--out` 目录里不影响判断。
+`--out` 指向已存在的非空目录时，只有它是之前的 run 目录（里面的 `result.json` 是 api-regress 写的）才会复用（先清掉旧的 `baseline/`、`candidate/` 和报告）；否则拒绝写入，退出码 3，以免把文件混进无关的目录或删掉别人的文件。`--log-file` 放在 `--out` 目录里不影响判断。
 
-`--out` 在发请求之前就检查，不能用时一个请求都不发。写入阶段才失败时（例如磁盘满），退出码为 3，stdout 的 result 行显示 `result: 未写入`。
+`--out` 在发请求之前就检查，不能用时一个请求都不发。写入阶段才失败时（例如磁盘满），退出码为 3，stdout 的 result 行显示 `result: 未写入`。某个报告写不出来时，其他报告和 `result.json` 照常写，退出码为 3，原因里写明是哪个报告出错。
 
 ### result.json
 

@@ -47,10 +47,18 @@ flowchart LR
   STATUS --> SAMPLES
   RUNDIR --> SAMPLES
   RUNDIR --> RESULT
+  SVC --> RDATA[core.reportdata]
+  RDATA --> RUNNER
+  RDATA --> RESULT
+  CLI --> REPORT[api_regress.report]
+  REPORT --> RDATA
+  REPORT --> JSONLOAD
+  REPORT --> RUNDIR
 ```
 
 - `core` 是纯库，不能 import `cli` 或 `report`。由 `pyproject.toml` 里的 import-linter 契约保证，CI 执行 `lint-imports`。
 - `cli` 只做参数解析、日志初始化、打印摘要，业务都通过 `core.service`。
+- `report` 只依赖 `core`。core 不能 import report，所以报告由 cli 按 `--format` 取出渲染函数（`report.reporters`），作为 `RunOptions.reporters` 传给 `core.service`，由 service 在写入阶段调用（见「报告」）。以后的界面可以传自己的渲染函数，或者不传。
 - `demo` 是独立的演示服务，不依赖 `core`、`cli`、`report`，`core` 也不依赖它（同样由 import-linter 契约保证）。只有 `cli.demo` 调用它。
 
 ## 模块
@@ -79,12 +87,17 @@ flowchart LR
 | `core/snapshot.py` | 快照：manifest 模型、读（含版本检查）、写前检查、按请求合并、原子替换、残留恢复 | `load`、`readable`、`check_writable`、`write`、`recover`、`Snapshot`、`Manifest`、`NewEntry`、`SnapshotError`、`SnapshotVersionError` |
 | `core/accept.py` | accept 的判定：有序规则表 `ACCEPT_RULES` | `rejection` |
 | `core/executor.py` | 并发执行每条请求：并发名额、取消、进度事件、单条请求的意外异常；run / compare / record 三种模式 | `Executor`、`Executed`、`Targets`、`RequestStarted`、`RequestDone`、`CancelToken` |
-| `core/service.py` | 对外编排入口，提供 async 和同步两种调用；命令的前置检查和退出码；本次未命中的规则 | `validate_suite(_sync)`、`run(_sync)`、`compare(_sync)`、`record(_sync)`、`accept(_sync)`、`RunOptions`、`CompareOptions`、`RecordOptions`、`AcceptOptions`、`RunReport`、`RecordReport`、`AcceptReport`、`CommandReport` |
+| `core/reportdata.py` | 报告的输入：`result.json` 之外渲染报告要用的信息（参与对比的两侧 sample、请求头名字、规则路径、带 query 的请求路径），以及 `Reporter`（文件名 + 只在内存里渲染、返回 bytes 的函数） | `ReportInput`、`RequestExtras`、`Reporter`、`extras_for` |
+| `core/service.py` | 对外编排入口，提供 async 和同步两种调用；命令的前置检查和退出码；本次未命中的规则；调用报告渲染函数 | `validate_suite(_sync)`、`run(_sync)`、`compare(_sync)`、`record(_sync)`、`accept(_sync)`、`RunOptions`、`CompareOptions`、`RecordOptions`、`AcceptOptions`、`RunReport`、`RecordReport`、`AcceptReport`、`CommandReport` |
 | `cli.py` | Click 命令行（`cli` 命令组 + 各子命令，快照命令在 `snapshot` 子命令组下）、日志初始化 | `main`、`cli`、`validate`、`run`、`snapshot`、`compare`、`record`、`accept`、`demo`、`setup_logging` |
 | `demo/server.py` | 本地演示服务：标准库 `ThreadingHTTPServer`；`/v1`、`/v2` 前缀选数据集，有序路由表 `ROUTES`；Decimal 原样输出；不开 `SO_REUSEADDR`，端口被占用时直接报错 | `make_server`、`base_url`、`dispatch`、`dumps`、`DemoServer`、`DEFAULT_PORT` |
 | `demo/data.py` | 演示数据：v1 固定数据，v2 的每处改动写在 `_v2_*` 函数里 | `DATASETS` |
 | `demo/__init__.py`、`demo/suites/` | 自带的 `pass.yaml`、`regress.yaml`（作为包数据随 wheel 发布）及写出方法 | `suite_text`、`write_suites`、`SUITE_NAMES` |
-| `report/` | 报告渲染（尚未实现，目前为空包） | |
+| `report/__init__.py` | 格式名到 `Reporter` 的表 `FORMATS`；`--format none` 的名字 `NONE` | `reporters`、`FORMATS`、`NONE` |
+| `report/common.py` | 几种报告共用的展示逻辑：finding 的值怎么显示、curl 复现命令、状态码、规则引用、body 的展示文本（按原文小数位排版 JSON） | `finding_values`、`curl_command`、`side_views`、`body_text`、`pretty_json`、`compact_json`、`status_codes`、`failing` |
+| `report/html.py`、`report/templates/report.html.j2` | `report.html`：Jinja2（autoescape）+ `difflib.HtmlDiff` 的 body 对照 | `render`、`body_diff` |
+| `report/md.py` | `report.md` | `render`、`cell` |
+| `report/junit.py` | `junit.xml`：ElementTree 生成 | `render`、`xml_text` |
 
 ## validate 主流程
 
@@ -244,8 +257,13 @@ flowchart TD
   X2 -->|意外异常| CR["executor._crashed：这条记 error，内部错误"]
   F --> R["_finish：_unmatched 汇总、退出码、Summary、RunResult"]
   CR --> R
-  R --> W["_write_run_dir：rundir.prepare → baseline/、candidate/ → result.json"]
+  R --> W["_write_sides：rundir.prepare → baseline/、candidate/"]
   W -->|OSError| E3["退出码 3"]
+  W --> RP["_render_reports：在内存里渲染 RunOptions.reporters"]
+  RP -->|有报告生成失败| E3b["结果改成退出码 3，其余报告用新结果重新渲染"]
+  E3b --> RP
+  RP --> WR["_write_outputs：报告文件 → result.json（最后写）"]
+  WR -->|OSError：删掉本次写出的报告| E3
 ```
 
 - **发请求**（`runner.py`）：`make_call` 拼 URL（`base_url` 去掉末尾 `/` 加 `path`，`copy_merge_params` 附加 query），按 defaults → target → 请求级合并请求头（名字转小写去重，保留最后的写法）。`Call.headers` 只用于发送。`new_client` 设 `follow_redirects=False`；一个 `Runner` 持有一个 `asyncio.Semaphore(concurrency)`，每次 `fetch`（含重试）占一个名额。每次尝试外面套 `asyncio.timeout(timeout)`：httpx 的 `Timeout` 只限制单次连接、读、写，慢慢吐数据的响应能拖很久，总时限超了抛内置的 `TimeoutError`，和 httpx 的超时一样参与重试。
@@ -279,14 +297,24 @@ flowchart TD
 ### run 目录（`rundir.py`）
 
 - `default_out_dir`：`api-regress-out/<YYYYmmdd-HHMMSS>`，已存在时加 `-2`、`-3`。
-- `check`：已存在的非空目录必须是之前的 run 目录才能用：`result.json` 能解析，并且有 `schema_version`、`command`、`tool_version`（`_written_by_us`）；`ignore` 里的文件（`RunOptions.log_file`，CLI 的 `--log-file`）不算。不满足抛 `RunDirError`（`OSError` 子类）。`service.run` / `service.compare` 在发请求之前调用，失败直接返回退出码 3。
-- `prepare`：写入前再 `check` 一次，然后删掉旧的 `baseline/`、`candidate/`（记 INFO 日志）。不对 `--out` 本身做目录交换，避免 `--out .` 之类的误用删掉无关文件。
-- `write_side`：`<side>/<name>.json`，内容由 `samples.side_document` 生成：`name`、`fingerprint`、`fingerprint_version` 和 `samples`（`samples.to_record`）。先写两侧，最后写 `result.json`。
+- `check`：已存在的非空目录必须是之前的 run 目录才能用：`result.json` 能解析，并且有 `schema_version`、`command`、`tool_version`（`_written_by_us`）；或者是上次中途失败留下的（`_is_leftover`：没有 `result.json`，只有两侧目录和报告，两侧目录里只有 `.json` 文件）；`ignore` 里的文件（`RunOptions.log_file`，CLI 的 `--log-file`）不算。不满足抛 `RunDirError`（`OSError` 子类）。`service.run` / `service.compare` 在发请求之前调用，失败直接返回退出码 3。
+- `prepare`：写入前再 `check` 一次，然后**先删旧的 `result.json`**，再删 `baseline/`、`candidate/` 和 `REPORT_FILES` 列出的旧报告（记 INFO 日志）。`result.json` 最后才写，所以本次中途失败或被打断时目录里没有 `result.json`：不会出现旧结果配新响应，`accept` 的 `read_result` 也会拒绝这个目录；`_is_leftover` 让这样的目录下次还能复用。删旧报告是免得 `--format` 变了以后留下和本次结果对不上的报告。不对 `--out` 本身做目录交换，避免 `--out .` 之类的误用删掉无关文件。
+- `write_side`：`<side>/<name>.json`，内容由 `samples.side_document` 生成：`name`、`fingerprint`、`fingerprint_version` 和 `samples`（`samples.to_record`）。先写两侧，再写报告，最后写 `result.json`。
 - `read_result` / `read_side`：accept 读回 run 目录。`read_result` 要求 `_written_by_us`、能按 `RunResult` 解析、请求名都符合 `config.NAME_PATTERN`（请求名会拼进文件路径，防止改过的 `result.json` 穿出目录），否则抛 `RunDirError`；`read_side` 文件不存在返回 `None`，格式不对抛 `SampleFormatError`。
 
 ### 退出码（`result.py`）
 
-`EXIT_RULES` 是按 2 > 3 > 1 > 4 > 0 排列的 `(码, 谓词, 原因)` 表，`exit_code(ExitState)` 取第一个满足的。`run_exit_state` 统计达到 `--fail-on`（`FAIL_ON_LEVELS`）的 finding 数和 `error` / `inconclusive` 的请求数。suite 错误（2）在加载阶段直接返回；单条请求的意外异常、进度回调出错通过 `ExitState.internal_error` 参与计算。写 run 目录失败（3）发生在写入阶段：`RunReport` 和其中的 `result` 都改成 3 和新原因，`out_dir` 为 `None`（CLI 显示 `result: 未写入`）；磁盘上如果已经写出了 `result.json`，里面是写入前算出的码。
+`EXIT_RULES` 是按 2 > 3 > 1 > 4 > 0 排列的 `(码, 谓词, 原因)` 表，`exit_code(ExitState)` 取第一个满足的。`run_exit_state` 统计达到 `--fail-on`（`FAIL_ON_LEVELS`）的 finding 数和 `error` / `inconclusive` 的请求数。suite 错误（2）在加载阶段直接返回；单条请求的意外异常、进度回调出错通过 `ExitState.internal_error` 参与计算。写 run 目录失败（3）发生在写入阶段：`RunReport` 和其中的 `result` 都改成 3 和新原因（`service._write_failed`），`out_dir` 为 `None`（CLI 显示 `result: 未写入`），本次写出的报告被删掉，`result.json` 不写。报告生成失败也是 3：在写任何文件之前就确定了，所以报告、`result.json` 和进程的退出码一致。
+
+## 报告（`report/`）
+
+- **调用时机**：`service._finish` 写完两侧响应后，用 `_report_input` 组装 `ReportInput`（`RunResult` 加每条请求的 `reportdata.extras_for`）。`_render_reports` 先只在内存里渲染全部报告（`Reporter.render` 返回 bytes，报告模块不写文件）：有报告出错时记 ERROR 日志、去掉它、把结果改成退出码 3（`_with_internal_error`，原因列出报告名和异常），再用新结果重新渲染其余报告，直到没有出错的为止（每轮至少去掉一个，一定结束）。然后 `_write_outputs` 写报告文件、最后写 `result.json`；任何 `OSError` 都删掉本次写出的报告再抛出。这样写出的报告和 `result.json`、进程的退出码总是一致。写出的路径放进 `RunReport.reports`，CLI 打印成 `reports:` 一行。
+- **为什么要 `ReportInput`**：`result.json` 里没有 body 原文（HTML 的对照要用）、请求头名字（curl 要用）和规则路径（"命中的规则"要用），而 `result.json` 是对外契约，不为报告加字段。请求头只取名字（`runner.merge_headers` 合并后的 key），值不进 `ReportInput`。
+- **展示规则**（`report/common.py`）：finding 两侧的值按 `base_type` / `cand_type` 显示：`absent` 或 `Absent` 实例写 `(缺失)`；类型为 None 且值是集合时是 schema 数组的汇总，写 `{a, b}`，`scale_changed` 加"小数位"前缀；其余用 `compact_json`（单行，对象和数组里嵌套的 `Decimal` 也按原文小数位、不加引号）。各报告各自截断（HTML 300、Markdown 80、JUnit 200 字符）。curl 用 `shlex.quote`，HEAD 用 `-I`，其他 `-i`，请求头值写 `<redacted>`。
+- **HTML**：`jinja2.Environment(autoescape=True, undefined=StrictUndefined)`，模板随包发布，用 `importlib.resources` 读。没有 JS，用 `<details>` 折叠，有问题的请求默认展开；颜色跟随 `prefers-color-scheme`。body 对照用 `difflib.HtmlDiff(wrapcolumn=100).make_table(context=True, numlines=3)`，它会转义 `<`、`>`、`&`，结果用 `Markup` 原样插入；每次调用的锚点前缀不同，多张表放在一页不冲突。`body_text` 用 `jsonload.load_body` 解析后由 `pretty_json` 排版（`json.dumps` 不认 `Decimal`，也会丢掉 `12.50` 的末尾 0）；非 JSON 原样，非 UTF-8 只给字节数。超过 1500 行或 20 万字符截断并注明：`HtmlDiff` 对长输入很慢。两侧文本相同时不出表格，只给一句说明。
+- **Markdown**：标题 `### 名字  方法 路径  基线码 → 候选码`，表格单元格和列表项经 `md.cell` 转义 `|`、尖括号、反引号、`*`、`_` 和换行（路径里的 `[*]`、`**` 否则会被渲染成斜体、粗体）。只展开有 finding 或状态不是 `ok` 的请求（`unsupported` 也展开，附原因）。
+- **JUnit**：`testsuites > testsuite > testcase`。failure / error / skipped 的判定在 `junit._outcome`：先看达到 `--fail-on` 的 finding（failure），再看 `error` / `inconclusive`（error），`unsupported` 记 skipped，和退出码 1 优先于 4 一致。`xml_text` 把 XML 1.0 不允许的字符换成 U+FFFD。
+- **测试**（`tests/test_report.py`）：Markdown 和 JUnit 与 `tests/golden/` 下的快照逐字比较（`UPDATE_GOLDEN=1` 重新生成）；HTML 检查 `<script>` 被转义、各板块存在；JUnit 用 `xml.etree` 解析并核对 failure / error / skipped 数；报告生成失败时其余报告和 `result.json` 的退出码一致、写文件失败不留报告和 `result.json`、复用目录先删旧 `result.json` 且中断留下的目录可复用、`--format` 重复和 `none`。
 
 ## snapshot record / compare / accept
 
@@ -340,13 +368,13 @@ flowchart TD
 
 ## CLI 约定
 
-- 子命令挂在 `cli` 命令组下：`validate`、`run`、`snapshot`、`demo`；`snapshot` 本身是命令组，下面挂 `record`、`compare`、`accept`，这样顶层只有实时对比的 `run`，和快照有关的都在一处。几个命令共用的参数（`-d` / `--dir`，参数名仍是 `snapshot`；`--only`、`--out`、`--fail-on`、suite 参数）定义成模块级的装饰器常量；`_finish` 统一打印错误或摘要，最后一行总是 `exit N: 原因`。通用参数（`--log-level`、`--log-file`）由装饰器 `common_options` 统一添加；它也负责初始化日志（日志文件打不开返回 3），并把未捕获的异常记为内部错误（退出码 3）。Click 自己的异常（`UsageError`、`Exit`、`Abort`）原样抛出，交给 `main`。
+- 子命令挂在 `cli` 命令组下：`validate`、`run`、`snapshot`、`demo`；`snapshot` 本身是命令组，下面挂 `record`、`compare`、`accept`，这样顶层只有实时对比的 `run`，和快照有关的都在一处。几个命令共用的参数（`-d` / `--dir`，参数名仍是 `snapshot`；`--only`、`--out`、`--fail-on`、`--format`、suite 参数）定义成模块级的装饰器常量；`--format` 是可重复的选项（和 `--only` 一样），`_parse_formats` 把每个值按逗号拆开、去重前校验（`_format_problem`：未知格式、空值、`none` 和其他格式混用），写错走 `BadParameter`，退出码 2；不写时全部输出，`none` 时返回空列表；`_finish` 统一打印错误或摘要，最后一行总是 `exit N: 原因`。通用参数（`--log-level`、`--log-file`）由装饰器 `common_options` 统一添加；它也负责初始化日志（日志文件打不开返回 3），并把未捕获的异常记为内部错误（退出码 3）。Click 自己的异常（`UsageError`、`Exit`、`Abort`）原样抛出，交给 `main`。
 - 子命令返回 int 作为退出码。`main` 用 `standalone_mode=False` 调用 Click：子命令返回值和 `ctx.exit(code)` 都会作为返回值传出来；`ClickException`（含参数错误）返回 2，`Abort` 返回 3。
 - 错误和 warning 的位置前缀统一由 `config.format_where` 生成：`suite.yaml:12: requests[0].method:`。
 
 ## 日志
 
 - 标准库 `logging`。`cli.setup_logging` 把 `api_regress` logger 输出到 stderr，`--log-file` 时同时写文件。
-- **INFO 节点**：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）；run 开始的请求数（`service.run`）、每次请求的发出和返回（`runner.Runner`：请求名、target、方法、URL、状态码、耗时、重试次数；发出时只列请求头的**名字**）、每条请求的状态和 finding / warning 数（`flow.evaluate`）、汇总（`service._log_summary`）、写入的每个文件（`service._write_run_dir`、`rundir.write_result`）、各命令的退出码及原因（`service._finish_log`，由 `_finish`、`_suite_error`、`_internal_error`、`_record`、`_accept` 调用）；record / compare 开始的请求数（`service._record`、`service._paired`）、快照的读取和写入（`snapshot.load`、`snapshot.write`）、残留的删除和恢复（`snapshot.recover`，恢复记 WARNING）、compare 读中断残留（`snapshot.readable`，WARNING）、accept 拒绝的每条请求（`service._accept`）。
+- **INFO 节点**：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）；run 开始的请求数（`service.run`）、每次请求的发出和返回（`runner.Runner`：请求名、target、方法、URL、状态码、耗时、重试次数；发出时只列请求头的**名字**）、每条请求的状态和 finding / warning 数（`flow.evaluate`）、汇总（`service._log_summary`）、写入的每个文件（`service._write_sides`、`service._write_outputs`、`rundir.write_result`）、各命令的退出码及原因（`service._finish_log`，由 `_finish`、`_suite_error`、`_internal_error`、`_record`、`_accept` 调用）；record / compare 开始的请求数（`service._record`、`service._paired`）、快照的读取和写入（`snapshot.load`、`snapshot.write`）、残留的删除和恢复（`snapshot.recover`，恢复记 WARNING）、compare 读中断残留（`snapshot.readable`，WARNING）、accept 拒绝的每条请求（`service._accept`）。
 - **WARNING**：validate 的 warning、重试（`runner.Runner._fetch`）。**ERROR**：suite 错误、`--out` / 快照 / run 目录不能用或写入失败（`service._suite_error`、`service._internal_error`）。快照目录不存在时 compare 记 WARNING。**DEBUG**：响应体的前 2KB（`repr` 形式）。
-- **任何级别都不输出请求头的值**：`runner.Call.headers` 只传给 httpx；`Sample`、run 目录、快照、`result.json` 里没有请求头；保存的响应头只有 `Content-Type` 和 `compare_headers`。报错和 warning 只包含字段位置、变量名。`tests/test_cli.py`（validate）、`tests/test_run_cli.py`（run：stdout、stderr、日志文件、run 目录）和 `tests/test_snapshot_cli.py`（record → compare → accept：日志文件、快照、run 目录，响应的 `Set-Cookie` 里也放了哨兵）用哨兵 token 校验。
+- **任何级别都不输出请求头的值**：`runner.Call.headers` 只传给 httpx；`Sample`、run 目录、快照、`result.json` 里没有请求头；保存的响应头只有 `Content-Type` 和 `compare_headers`。报错和 warning 只包含字段位置、变量名。`tests/test_cli.py`（validate）、`tests/test_run_cli.py`（run：stdout、stderr、日志文件、run 目录）和 `tests/test_snapshot_cli.py`（record → compare → accept：日志文件、快照、run 目录，响应的 `Set-Cookie` 里也放了哨兵）用哨兵 token 校验；`tests/test_run_cli.py` 的 run 目录里包含三种报告。

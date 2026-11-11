@@ -25,7 +25,7 @@
 - **数字类型**：`1` 和 `1.0` 都是数字，不算类型变化；值比较时也相等。`NaN` 和 `NaN` 在值比较时视为相等。
 - **只报最高层**：一个对象被删除，或者变成了别的类型（包括 `null`），只在这个对象上报一条，不再列出它下面的每个字段。
 - **变成 null 又配了值比较**：比如 `data.amount` 配了 `on_value_change: breaking`，`12.50` → `null` 会报两条：`nullability_changed`（suspicious）和 `value_changed`（breaking）。所以 `--fail-on breaking` 能拦住它。
-- **两侧值看起来一样的 `type_changed`**：`12.50` → `"12.50"` 在报告里两侧的值都显示成 `12.50`，看 finding 的 `base_type` / `cand_type`（`number` → `string`）区分。
+- **两侧值看起来一样的 `type_changed`**：`12.50` → `"12.50"`。HTML / Markdown 报告里字符串带引号（`12.50` → `"12.50"`）；`result.json` 里两侧的值都是 `"12.50"`，看 finding 的 `base_type` / `cand_type`（`number` → `string`）区分。
 - **字段改名**会报成两条：
 
   ```

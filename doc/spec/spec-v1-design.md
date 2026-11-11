@@ -42,7 +42,7 @@ flowchart LR
 | `core/diff/unstable.py` | 不稳定字段建议 |
 | `core/snapshot.py` | 读写快照、原子替换（已实现；指纹在 `core/samples.py`，执行器拆到 `core/executor.py`，accept 判定在 `core/accept.py`） |
 | `core/service.py` | 编排各命令 |
-| `report/{html,md,junit,jsonout}.py` | 各种报告的渲染 |
+| `report/{html,md,junit}.py` | 各种报告的渲染（已实现；`result.json` 由 `core/rundir.py` 写，公共展示逻辑在 `report/common.py`，报告输入在 `core/reportdata.py`） |
 | `cli.py` | 命令行入口 |
 
 ### 1.2 控制复杂度（CC ≤ 10）
@@ -75,9 +75,7 @@ flowchart LR
 - **请求、重试**：已在 T4 落地，迁到 doc/dev 的「run 主流程」。
 - **快照原子写入、残留恢复、manifest**：已在 T5 落地，迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「快照」一节。
 - **指纹、body 存储**：已落地（`core/samples.py`，run 目录和快照共用），见 doc/dev。
-- **HTML 报告**：
-  - Jinja2 开启 `autoescape`。
-  - 两侧对照用 `difflib.HtmlDiff(context=True)` 生成，已实测它会转义 `<script>`。body 过大时截断，不引入 JS 库。
+- **HTML 报告**：已在 T6 落地，迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「报告」一节。
 - **未命中规则检测**：已在 T4 落地，见 doc/dev。
 
 ## 6. 日志

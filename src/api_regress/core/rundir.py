@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 DEFAULT_ROOT = Path("api-regress-out")
 RESULT_FILE = "result.json"
 SIDE_DIRS = ("baseline", "candidate")
+REPORT_FILES = {"html": "report.html", "md": "report.md", "junit": "junit.xml"}
+"""各种报告的文件名。复用 run 目录时先删掉旧的，免得留下和本次结果对不上的报告。"""
 
 
 class RunDirError(OSError):
@@ -53,9 +55,22 @@ def _written_by_us(path: Path) -> bool:
     )
 
 
+_LEFTOVER_ENTRIES = frozenset({*SIDE_DIRS, *REPORT_FILES.values()})
+
+
+def _is_leftover(entries: list[Path]) -> bool:
+    """上次写到一半中断（result.json 最后写，所以还没有）：只有两侧目录和报告，两侧目录里只有 .json 文件。"""
+    for entry in entries:
+        if entry.name not in _LEFTOVER_ENTRIES:
+            return False
+        if entry.is_dir() and any(not (f.is_file() and f.suffix == ".json") for f in entry.iterdir()):
+            return False
+    return True
+
+
 def _is_reusable(out: Path, ignore: Collection[Path]) -> bool:
     entries = [p for p in out.iterdir() if p.resolve() not in ignore]
-    return not entries or _written_by_us(out / RESULT_FILE)
+    return not entries or _written_by_us(out / RESULT_FILE) or _is_leftover(entries)
 
 
 def check(out: Path, ignore: Collection[Path] = ()) -> None:
@@ -71,13 +86,25 @@ def check(out: Path, ignore: Collection[Path] = ()) -> None:
 
 
 def prepare(out: Path, ignore: Collection[Path] = ()) -> None:
-    """再检查一次，然后清掉上次留下的两侧响应。"""
+    """再检查一次，然后清掉上次留下的 result.json、两侧响应和报告。
+
+    result.json 最先删：本次写到一半失败或被打断时，目录里不会留下上次的 result.json 配本次的两侧响应。"""
     check(out, ignore)
+    old_result = out / RESULT_FILE
+    if old_result.is_file():
+        log.info("清掉上次的 %s", old_result)
+        old_result.unlink()
     for side in SIDE_DIRS:
         old = out / side
         if old.is_dir():
             log.info("清掉上次的 %s", old)
             shutil.rmtree(old)
+    ignored = {p.resolve() for p in ignore}
+    for name in REPORT_FILES.values():
+        old_report = out / name
+        if old_report.is_file() and old_report.resolve() not in ignored:
+            log.info("清掉上次的 %s", old_report)
+            old_report.unlink()
     out.mkdir(parents=True, exist_ok=True)
 
 

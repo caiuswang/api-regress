@@ -11,8 +11,6 @@
 
 差异分为 **breaking / suspicious / info** 三级，结果输出成报告，同时给出 CI 可直接使用的退出码。
 
-> 项目还在开发中：目前可用的是 `validate`、`run`、`snapshot record` / `compare` / `accept`（输出 `result.json`、两侧响应和快照）和本地演示服务 `demo`；HTML / Markdown / JUnit 报告尚未实现。
-
 ## 适用场景
 
 | 场景 | 做法 |
@@ -51,6 +49,8 @@ api-regress demo                        # 另开一个终端启动服务，Ctrl+
 api-regress run demo/pass.yaml          # 两侧都是 /v1：全部通过，退出码 0
 api-regress run demo/regress.yaml       # /v1 对 /v2：报出 breaking，退出码 1
 ```
+
+然后用浏览器打开 stdout 里 `reports:` 行列出的 `report.html`，看每处改动报成了什么。
 
 ### 对比自己的接口
 
@@ -99,7 +99,7 @@ api-regress snapshot compare suite.yaml -d snap/   # 发版后
 api-regress snapshot accept  api-regress-out/<时间戳> -d snap/ --only order-detail
 ```
 
-结果输出到 `api-regress-out/<时间戳>/` 目录（`result.json`、两侧的响应），stdout 打印摘要，见 [doc/user/run.md](doc/user/run.md)。快照的录制、对比和更新见 [doc/user/snapshot.md](doc/user/snapshot.md)：`snapshot record` 只需要基线的环境变量，`snapshot compare` 只需要候选的；快照缺失或指纹不一致的请求是 `inconclusive`，`snapshot accept` 后即可正常对比。
+结果输出到 `api-regress-out/<时间戳>/` 目录：`report.html`（浏览器打开排查）、`report.md`（贴到 PR）、`junit.xml`（给 CI）、`result.json` 和两侧的响应，stdout 打印摘要。用 `--format md,junit` 只要其中几种报告。命令见 [doc/user/run.md](doc/user/run.md)，报告怎么看见 [doc/user/report.md](doc/user/report.md)。快照的录制、对比和更新见 [doc/user/snapshot.md](doc/user/snapshot.md)：`snapshot record` 只需要基线的环境变量，`snapshot compare` 只需要候选的；快照缺失或指纹不一致的请求是 `inconclusive`，`snapshot accept` 后即可正常对比。
 
 **退出码**
 
@@ -108,7 +108,7 @@ api-regress snapshot accept  api-regress-out/<时间戳> -d snap/ --only order-d
 | 0 | 通过 |
 | 1 | 有达到 `--fail-on` 级别的差异 |
 | 2 | 配置错误（含命令行参数写错、快照版本不兼容） |
-| 3 | 工具自身错误（含快照损坏、无法写入快照或 run 目录） |
+| 3 | 工具自身错误（含快照损坏、无法写入快照、run 目录或报告） |
 | 4 | 部分请求无法得出结论，比如网络错误、token 失效、基线不可用、快照里没有；`snapshot record` / `accept` 有请求没写入快照 |
 
 ## 文档
@@ -117,8 +117,9 @@ api-regress snapshot accept  api-regress-out/<时间戳> -d snap/ --only order-d
 |---|---|
 | [doc/user/suite.md](doc/user/suite.md) | suite 配置格式：完整示例、字段、路径写法、规则怎么合并 |
 | [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、warning、环境变量、YAML 常见坑 |
-| [doc/user/run.md](doc/user/run.md) | `run` 命令：请求怎么发、每条请求的流程与状态、非 body 的差异、不稳定字段建议、stdout、退出码、run 目录与 `result.json` |
+| [doc/user/run.md](doc/user/run.md) | `run` 命令：请求怎么发、每条请求的流程与状态、非 body 的差异、不稳定字段建议、`--format`、stdout、退出码、run 目录与 `result.json` |
 | [doc/user/snapshot.md](doc/user/snapshot.md) | `snapshot record` / `compare` / `accept`：快照怎么录、怎么对比、accept 接受和拒绝的规则、请求指纹、快照目录格式与原子写入、退出码 |
+| [doc/user/report.md](doc/user/report.md) | 怎么看报告：各板块、finding 的值怎么读、字段改名等示例、JUnit 的判定 |
 | [doc/user/compare.md](doc/user/compare.md) | 对比规则：差异类型与级别、规则属性、数组模式怎么选、已知限制 |
 | [doc/user/expressions.md](doc/user/expressions.md) | `success` 与 `asserts` 表达式的写法、内置函数、不支持的语法 |
 | [doc/user/demo.md](doc/user/demo.md) | `demo` 本地演示服务：接口、v2 改了什么、两个示例 suite |
@@ -147,6 +148,8 @@ uv run pytest
 
 改了对比行为时，`tests/test_diff_combinations.py` 会失败：确认变化符合预期后运行 `uv run python scripts/gen_diff_combinations.py` 重新生成 [doc/dev/diff-combinations.md](doc/dev/diff-combinations.md)。
 改了表达式行为时同理：`tests/test_expr_combinations.py` 的快照测试会失败，确认后运行 `uv run python scripts/gen_expr_combinations.py` 重新生成 [doc/dev/expr-combinations.md](doc/dev/expr-combinations.md)；同一文件里的不变量测试失败则说明是 bug。
+
+改了报告格式时，`tests/test_report.py` 的快照测试会失败：确认变化符合预期后运行 `UPDATE_GOLDEN=1 uv run pytest tests/test_report.py` 重新生成 `tests/golden/` 下的快照，逐行检查 diff。
 
 改了 `result.json` 的数据模型时，`tests/test_result_schema.py` 会失败：确认后运行 `uv run python scripts/export_result_schema.py` 重新导出 [schema/result.schema.json](schema/result.schema.json)。
 

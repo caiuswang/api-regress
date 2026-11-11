@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites name="api-regress">
+  <testsuite name="api-regress run: suite.yaml" tests="7" failures="3" errors="2" skipped="1" time="2.000" timestamp="2026-11-11T10:15:00+08:00">
+    <testcase name="order-detail" classname="suite" time="0.012">
+      <failure message="1 条达到 breaking 级别的 finding" type="finding">[breaking] field_removed data.coupon_amount："5.00" → (缺失)</failure>
+      <system-out>[info] field_added data.discount_amount：(缺失) → "5.00"</system-out>
+    </testcase>
+    <testcase name="order-list" classname="suite" time="0.012">
+      <failure message="1 条达到 breaking 级别的 finding" type="finding">[breaking] scale_changed data.list[*].price（示例下标 0）：小数位 {2} → 小数位 {1, 2}</failure>
+    </testcase>
+    <testcase name="xss" classname="suite" time="0.012">
+      <failure message="1 条达到 breaking 级别的 finding" type="finding">[breaking] value_changed data.note："plain" → "&lt;script&gt;alert(1)&lt;/script&gt;"</failure>
+    </testcase>
+    <testcase name="expired" classname="suite" time="0.012">
+      <error message="inconclusive：候选返回 401，检查候选的 token 或限流" />
+    </testcase>
+    <testcase name="down" classname="suite" time="0.000">
+      <error message="error：候选请求失败：ConnectError: connection refused（已重试 1 次）" />
+    </testcase>
+    <testcase name="page" classname="suite" time="0.012">
+      <skipped message="unsupported：两侧都不是 JSON，只比较状态码" />
+    </testcase>
+    <testcase name="health" classname="suite" time="0.012" />
+  </testsuite>
+</testsuites>

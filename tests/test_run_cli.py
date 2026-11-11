@@ -61,7 +61,8 @@ def test_run_end_to_end_no_header_values_leak(httpserver, tmp_path, monkeypatch,
     lines = captured.out.splitlines()
     assert lines[0] == "requests 2 | ok 2 | error 0 | inconclusive 0 | unsupported 0"
     assert lines[1] == "findings: breaking 1 | suspicious 0 | info 1"
-    assert lines[-2] == f"result: {out / 'result.json'}"
+    assert lines[-3] == f"result: {out / 'result.json'}"
+    assert lines[-2] == f"reports: {out / 'report.html'}, {out / 'report.md'}, {out / 'junit.xml'}"
     assert lines[-1] == "exit 1: 存在 1 条达到 breaking 级别的 finding"
 
     # 请求确实带上了 token

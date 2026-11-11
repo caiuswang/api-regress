@@ -51,6 +51,7 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
 
 对比行为变化后重新生成组合表：`uv run python scripts/gen_diff_combinations.py`（输出 `doc/dev/diff-combinations.md`）。
 表达式行为变化后同理：`uv run python scripts/gen_expr_combinations.py`（输出 `doc/dev/expr-combinations.md`）。
+报告格式变化后重新生成快照：`UPDATE_GOLDEN=1 uv run pytest tests/test_report.py`（输出 `tests/golden/`），逐行检查 diff。
 `result.json` 的数据模型变化后重新导出 JSON Schema：`uv run python scripts/export_result_schema.py`（输出 `schema/result.schema.json`，`tests/test_result_schema.py` 拦住没更新的情况）。
 测试里发往本地 mock 服务的请求不能走代理，`tests/conftest.py` 会清掉代理环境变量；mock 两侧服务的工具在 `tests/mock_api.py`。
 
@@ -88,6 +89,7 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
 | finding 类型、级别、请求状态、warning code | spec 中的对比语义、`doc/user/` 中的报告解读、`result.json` 的 JSON Schema、`doc/dev/` |
 | 对比语义（`core/diff/`、`core/jsonload.py` 的行为） | 先改 spec；在 `scripts/gen_diff_combinations.py` 里补上新的维度或场景，重新生成 `doc/dev/diff-combinations.md`，逐格检查 diff（`tests/test_diff_combinations.py` 会拦住没更新的情况） |
 | 表达式语义（`core/expr.py`、`core/expr_values.py` 的行为） | 先改 spec；同步 `doc/user/expressions.md`；在 `scripts/gen_expr_combinations.py` 里补上新的维度，重新生成 `doc/dev/expr-combinations.md`，逐格检查 diff（`tests/test_expr_combinations.py` 拦住没更新的情况，并检查不变量） |
+| 报告内容或格式（`report/`、`core/reportdata.py`） | spec 中的输出一节；`doc/user/report.md`；`doc/dev/` 的「报告」；重新生成 `tests/golden/` |
 | `result.json` 的数据模型 | 运行 `scripts/export_result_schema.py` 重新导出 JSON Schema，更新 `doc/dev/` 中的数据契约和 `doc/user/run.md` 的字段说明 |
 | 新增、删除、重命名模块，模块职责变化，主流程变化 | `doc/dev/` 中的模块职责、关键路径、主流程图 |
 | 依赖、检查命令、开发命令 | 本文件中的"检查命令"一节、`README.md` |

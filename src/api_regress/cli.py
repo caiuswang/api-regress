@@ -11,7 +11,7 @@ from typing import Any, get_args
 
 import click
 
-from api_regress import __version__, demo as demo_pkg
+from api_regress import __version__, demo as demo_pkg, report as report_pkg
 from api_regress.core import service
 from api_regress.core.config import format_where
 from api_regress.core.result import FailOn, RequestResult
@@ -118,6 +118,8 @@ def _print_run(report: service.RunReport) -> None:
     extras = [f"warnings {s.warnings}", f"建议 ignore {suggestions}", f"本次未命中的规则 {len(result.unmatched_rules)}"]
     click.echo(" | ".join(extras))
     click.echo(f"result: {Path(report.out_dir) / 'result.json'}" if report.out_dir else "result: 未写入")
+    if report.reports:
+        click.echo(f"reports: {', '.join(report.reports)}")
 
 
 def _finish(report: service.CommandReport, printer: Callable[[Any], None]) -> int:
@@ -149,20 +151,48 @@ _FAIL_ON = click.option("--fail-on", type=click.Choice(FAIL_ON), default="breaki
 _SUITE = click.argument("suite", type=click.Path(dir_okay=False))
 
 
+def _format_problem(names: list[str]) -> str | None:
+    allowed = [*report_pkg.FORMATS, report_pkg.NONE]
+    if not names or any(name not in allowed for name in names):
+        return f"只能是 {', '.join(allowed)}，可以逗号分隔或重复"
+    if report_pkg.NONE in names and len(set(names)) > 1:
+        return f"{report_pkg.NONE} 不能和其他格式一起用"
+    return None
+
+
+def _parse_formats(ctx: click.Context, param: click.Parameter, values: tuple[str, ...]) -> list[str]:
+    """`--format` 可以重复，也可以逗号分隔；不给时全部输出；`none` 只输出 result.json，不能和其他格式一起用。"""
+    if not values:
+        return list(report_pkg.FORMATS)
+    names = [part.strip() for value in values for part in value.split(",")]
+    names = [name for name in names if name]
+    problem = _format_problem(names)
+    if problem:
+        raise click.BadParameter(problem)
+    return [name for name in names if name != report_pkg.NONE]
+
+
+_FORMAT = click.option(
+    "--format", "formats", multiple=True, callback=_parse_formats, metavar="FORMATS",
+    help="报告格式：html、md、junit，逗号分隔或重复，默认全部；none 表示只输出 result.json",
+)
+
+
 @cli.command()
 @_SUITE
 @_OUT
 @_FAIL_ON
+@_FORMAT
 @click.option("--baseline-url", help="覆盖 suite 里基线的 base_url")
 @click.option("--candidate-url", help="覆盖 suite 里候选的 base_url")
 @_ONLY
 @common_options
-def run(suite: str, out: Path | None, fail_on: str, baseline_url: str | None, candidate_url: str | None,
-        only: tuple[str, ...]) -> int:  # fmt: skip
+def run(suite: str, out: Path | None, fail_on: str, formats: list[str], baseline_url: str | None,
+        candidate_url: str | None, only: tuple[str, ...]) -> int:  # fmt: skip
     """两侧都实时请求并对比：基线 2 次、候选 1 次。"""
     options = service.RunOptions(
         out=out, fail_on=fail_on, baseline_url=baseline_url, candidate_url=candidate_url, only=list(only),
-        log_file=_log_file(),
+        log_file=_log_file(), reporters=report_pkg.reporters(formats),
     )  # fmt: skip
     return _finish(service.run_sync(suite, options), _print_paired)
 
@@ -177,14 +207,16 @@ def snapshot() -> None:
 @_SNAPSHOT
 @_OUT
 @_FAIL_ON
+@_FORMAT
 @click.option("--candidate-url", help="覆盖 suite 里候选的 base_url")
 @_ONLY
 @common_options
-def compare(suite: str, snapshot: Path, out: Path | None, fail_on: str, candidate_url: str | None,
-            only: tuple[str, ...]) -> int:  # fmt: skip
+def compare(suite: str, snapshot: Path, out: Path | None, fail_on: str, formats: list[str],
+            candidate_url: str | None, only: tuple[str, ...]) -> int:  # fmt: skip
     """基线读快照，候选实时请求 1 次并对比。只需要 candidate 的环境变量。"""
     options = service.CompareOptions(
-        snapshot=snapshot, out=out, fail_on=fail_on, candidate_url=candidate_url, only=list(only), log_file=_log_file()
+        snapshot=snapshot, out=out, fail_on=fail_on, candidate_url=candidate_url, only=list(only), log_file=_log_file(),
+        reporters=report_pkg.reporters(formats),
     )
     return _finish(service.compare_sync(suite, options), _print_paired)
 
