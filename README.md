@@ -37,6 +37,19 @@
 
 **不做**：Postman / Apifox 那类接口管理平台的功能，包括登录流程、请求串联、前后置脚本、Mock、接口文档。（内置的 `demo` 服务只提供固定的演示数据，不是 Mock 功能。）需要鉴权的接口，先自己拿到 token，再通过 `${VAR}` 注入请求头。
 
+## 安装
+
+需要 Python 3.12 和 [uv](https://docs.astral.sh/uv/)。在仓库根目录执行：
+
+```bash
+uv tool install --python 3.12 .   # 安装 api-regress 命令到 uv 的工具目录
+api-regress --help                # 确认可用
+```
+
+如果提示找不到 `api-regress`，运行 `uv tool update-shell` 把工具目录加进 `PATH`，然后重开终端。代码更新后用 `uv tool install --python 3.12 --reinstall .` 重新安装。
+
+不想全局安装的话，也可以 `uv sync --python 3.12` 后在下文每条命令前加 `uv run`（见[开发](#开发)）。
+
 ## 快速上手
 
 ### 不联网先试一下
