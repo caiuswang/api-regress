@@ -2,7 +2,7 @@
 
 suite 是一个 YAML 文件，写明两个目标（基线、候选）和要发的请求。写完先用 `api-regress validate` 检查，见 [validate.md](validate.md)。
 
-> 用到 suite 的命令：`validate`、[`run`](run.md)、[`snapshot record` / `snapshot compare`](snapshot.md)。
+> 用到 suite 的命令：`validate`、[`run`](run.md)、[`snapshot record` / `snapshot compare`](snapshot.md)、[`shape`](shape.md)。
 
 ## 完整示例
 

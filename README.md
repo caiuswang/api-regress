@@ -31,6 +31,7 @@
   - `nullable`：字段允许为 null
 - **业务成功条件**：`success: "body.code == 0"`，用来识别"HTTP 200 包着业务错误"的情况。
 - **asserts 表达式**（高级用法）：在一行表达式里同时访问基线和候选。
+- **字段树**：`shape` 从录好的样本里列出每个字段的类型、示例值和最终生效的规则，一眼看出哪些字段没配规则；还能写出规则文件骨架。
 - **不稳定字段建议**：基线会请求两次，两次结果不一样的字段（时间戳、traceId 等）列为"建议 ignore"，但不会自动忽略。
 - **报告**：HTML、Markdown、JUnit XML，以及机器可读的 `result.json`。
 - **只读请求**：只发 GET / HEAD，不会改动线上数据。
@@ -110,6 +111,10 @@ api-regress demo                              # 启动本地演示服务
 api-regress snapshot record  suite.yaml -d snap/   # 发版前
 api-regress snapshot compare suite.yaml -d snap/   # 发版后
 api-regress snapshot accept  api-regress-out/<时间戳> -d snap/ --only order-detail
+
+# review 规则：每个字段最后按什么规则比较、哪些字段没配（只读，不发请求）
+api-regress shape suite.yaml --from snap/ --only order-detail
+api-regress shape suite.yaml --from snap/ --write rules/          # 写出规则文件骨架
 ```
 
 结果输出到 `api-regress-out/<时间戳>/` 目录：`report.html`（浏览器打开排查）、`report.md`（贴到 PR）、`junit.xml`（给 CI）、`result.json` 和两侧的响应，stdout 打印摘要。用 `--format md,junit` 只要其中几种报告。命令见 [doc/user/run.md](doc/user/run.md)，报告怎么看见 [doc/user/report.md](doc/user/report.md)。快照的录制、对比和更新见 [doc/user/snapshot.md](doc/user/snapshot.md)：`snapshot record` 只需要基线的环境变量，`snapshot compare` 只需要候选的；快照缺失或指纹不一致的请求是 `inconclusive`，`snapshot accept` 后即可正常对比。
@@ -122,13 +127,14 @@ api-regress snapshot accept  api-regress-out/<时间戳> -d snap/ --only order-d
 | 1 | 有达到 `--fail-on` 级别的差异 |
 | 2 | 配置错误（含命令行参数写错、快照版本不兼容） |
 | 3 | 工具自身错误（含快照损坏、无法写入快照、run 目录或报告） |
-| 4 | 部分请求无法得出结论，比如网络错误、token 失效、基线不可用、快照里没有；`snapshot record` / `accept` 有请求没写入快照 |
+| 4 | 部分请求无法得出结论，比如网络错误、token 失效、基线不可用、快照里没有；`snapshot record` / `accept` 有请求没写入快照；`shape` 有请求没有样本 |
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
 | [doc/user/suite.md](doc/user/suite.md) | suite 配置格式：完整示例、字段、路径写法、规则怎么合并 |
+| [doc/user/shape.md](doc/user/shape.md) | `shape` 命令：字段树怎么看、生效的规则、过长的对象、写出规则文件骨架、退出码 |
 | [doc/user/rules-file.md](doc/user/rules-file.md) | 规则文件：按响应结构写规则（`rules_file`）、格式、优先级、YAML 的坑 |
 | [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、warning、环境变量、YAML 常见坑 |
 | [doc/user/run.md](doc/user/run.md) | `run` 命令：请求怎么发、每条请求的流程与状态、非 body 的差异、不稳定字段建议、`--format`、stdout、退出码、run 目录与 `result.json` |

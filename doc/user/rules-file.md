@@ -4,6 +4,8 @@ suite 里的 `rules` 是一串路径（`data.amount`、`data.items[*].price`）�
 
 规则文件只是另一种写法：加载时展开成和 `rules` 完全相同的路径规则，对比结果不变。
 
+不想从头手写时，先录一个快照，用 [`shape --write`](shape.md#写出规则文件骨架---write) 写出列好了所有字段的骨架，再在需要的字段上加属性；写好后用不带 `--write` 的 `shape` 看每个字段最终生效的规则。
+
 ## 引用
 
 在请求上写 `rules_file`：
@@ -21,7 +23,7 @@ requests:
 
 - 相对路径相对于 **suite 文件所在的目录**，不是当前目录；也可以写绝对路径。
 - 只能写在请求上，defaults 里不能写。多条请求可以引用同一个文件。
-- `validate`、`run`、`snapshot record`、`snapshot compare` 都会读规则文件；`snapshot accept` 不读 suite，不受影响。
+- `validate`、`run`、`snapshot record`、`snapshot compare`、`shape` 都会读规则文件；`snapshot accept` 不读 suite，不受影响。
 - 规则文件不参与[请求指纹](snapshot.md#请求指纹)，改规则不会让快照失效。
 - 规则文件里不替换 `${VAR}`。
 

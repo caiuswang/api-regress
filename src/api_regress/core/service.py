@@ -14,7 +14,7 @@ import httpx
 from pydantic import BaseModel
 
 from api_regress import __version__
-from api_regress.core import accept as acceptance, expr, reportdata, rundir, snapshot
+from api_regress.core import accept as acceptance, expr, reportdata, rundir, shapeflow, snapshot
 from api_regress.core.command import (
     CommandReport,
     Stop,
@@ -59,12 +59,13 @@ from api_regress.core.result import (
 )
 from api_regress.core.rules import RuleSet, static_warnings
 from api_regress.core.samples import LegacyFormatError, SampleFormatError, fingerprint
+from api_regress.core.shapeflow import DEFAULT_MAX_KEYS, ShapeOptions, ShapeReport
 
 __all__ = [
-    "AcceptOptions", "AcceptReport", "CancelToken", "CompareOptions", "OnEvent", "ProgressEvent", "RecordOptions",
-    "RecordReport", "Rejected", "RequestDone", "RequestStarted", "RunOptions", "RunReport", "ValidationReport",
-    "accept", "accept_sync", "compare", "compare_sync", "record", "record_sync", "run", "run_sync",
-    "validate_suite", "validate_suite_sync",
+    "DEFAULT_MAX_KEYS", "AcceptOptions", "AcceptReport", "CancelToken", "CompareOptions", "OnEvent", "ProgressEvent", "RecordOptions",
+    "RecordReport", "Rejected", "RequestDone", "RequestStarted", "RunOptions", "RunReport", "ShapeOptions",
+    "ShapeReport", "ValidationReport", "accept", "accept_sync", "compare", "compare_sync", "record", "record_sync",
+    "run", "run_sync", "shape", "shape_sync", "validate_suite", "validate_suite_sync",
 ]  # fmt: skip
 
 log = logging.getLogger(__name__)
@@ -628,3 +629,14 @@ def _accept(run_dir: Path, options: AcceptOptions) -> AcceptReport:
 async def accept(run_dir: str | Path, options: AcceptOptions) -> AcceptReport:
     return await asyncio.to_thread(accept_sync, run_dir, options)
 
+
+# ---------- shape ----------
+
+
+def shape_sync(path: str | Path, options: ShapeOptions, env: Mapping[str, str] | None = None) -> ShapeReport:
+    """从快照或 run 目录的基线样本输出字段树（或写出规则文件骨架）。只读，不发请求，不需要环境变量。"""
+    return shapeflow.shape_sync(path, options, env)
+
+
+async def shape(path: str | Path, options: ShapeOptions, env: Mapping[str, str] | None = None) -> ShapeReport:
+    return await shapeflow.shape_async(path, options, env)

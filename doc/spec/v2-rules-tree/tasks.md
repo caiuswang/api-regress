@@ -21,7 +21,7 @@ T9 的字段树要标出来自规则文件的规则，`--write` 写出的也是�
 | 任务 | 状态 | 主要模块 | 覆盖的 AC | 测试方式 |
 |---|---|---|---|---|
 | T8 | 待 review | rulesfile / config / rules / models / report | 43–47 | 单元测试 + mock 服务集成测试 + golden |
-| T9 | 未开始 | shape / shapeflow / service / cli | 38–42 | 固定快照、run 目录的集成测试 |
+| T9 | 待 review | shape / shapeflow / service / cli | 38–42 | 固定快照、run 目录的集成测试 |
 | T10 | 待 review | samples / snapshot / rundir / accept | 48–52 | mock 服务集成测试 |
 
 开工前提：spec.md §8 中的相关决策已确认（T8、T9：D26–D31；T10：D32–D34）。

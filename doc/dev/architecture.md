@@ -51,7 +51,16 @@ flowchart LR
   RDATA --> RUNNER
   RDATA --> RESULT
   SVC --> CMD[core.command]
+  SHAPEFLOW --> CMD
   CMD --> RESULT
+  SVC --> SHAPEFLOW[core.shapeflow]
+  SHAPEFLOW --> SHAPE[core.shape]
+  SHAPEFLOW --> CFG
+  SHAPEFLOW --> SNAP
+  SHAPEFLOW --> RUNDIR
+  SHAPEFLOW --> JSONLOAD
+  SHAPE --> RULES
+  SHAPE --> PATHS
   CLI --> REPORT[api_regress.report]
   REPORT --> RDATA
   REPORT --> JSONLOAD
@@ -67,7 +76,7 @@ flowchart LR
 
 | 模块 | 职责 | 关键入口 |
 |---|---|---|
-| `core/models.py` | 跨模块共用的枚举和模型：`Level`、`Side`、`WarningCode`、`WarningItem`；finding 相关：`FindingType`、`Finding`、`ValueType`、`RuleRef`、`PathToken`、`Absent`（单例 `ABSENT`）；`Suggestion` | `format_loc`、`to_path_tokens`、`finding_id`、`rule_where`（规则位置的写法） |
+| `core/models.py` | 跨模块共用的枚举和模型：`Level`、`Side`、`WarningCode`、`WarningItem`；finding 相关：`FindingType`、`Finding`、`ValueType`、`RuleRef`、`PathToken`、`Absent`（单例 `ABSENT`）；`Suggestion` | `format_loc`、`to_path_tokens`、`finding_id`、`rule_where`（规则位置的写法，报告和 shape 共用） |
 | `core/paths.py` | 路径语法：解析、格式化、匹配、泛化、具体程度 | `parse`、`format_path`、`match`、`covers`、`overlaps`、`generalize`、`specificity` |
 | `core/config.py` | suite 的 pydantic 模型；YAML 加载与规模限制；`${VAR}` 替换；报错行号；加载请求的规则文件并校验展开出的规则 | `load_suite`、`load_suite_text`、`parse_rules_file`、`FileRule`、`Request.file_rules`、`substitute_env`、`Suite.success_of`、`base_url_problem`、`format_where`、`NAME_PATTERN` |
 | `core/rulesfile.py` | 规则文件的展开：把和响应同形的树展开成「路径 + 属性」的原始规则，检查 key、值、路径和重复路径；不依赖 config，属性值交给 config 用 `Rule` 校验 | `expand`、`RawRule`、`Problem` |
@@ -89,12 +98,14 @@ flowchart LR
 | `core/result.py` | `result.json` 的数据模型；退出码谓词表 `EXIT_RULES` | `RunResult`、`RequestResult`、`SampleInfo`、`Summary`、`UnmatchedRule`、`exit_code`、`run_exit_state` |
 | `core/rundir.py` | run 目录：默认目录名、复用规则、两侧请求文件和 body 文件（`samples/<side>/<name>/`）、`result.json` 的写入；accept 读回 | `default_out_dir`、`check`、`prepare`、`write_side`、`body_dir`、`write_result`、`read_result`、`read_side` |
 | `core/snapshot.py` | 快照：manifest 模型、读（含版本检查）、写前检查、按请求合并、原子替换、残留恢复 | `load`、`readable`、`check_writable`、`write`、`recover`、`Snapshot`、`Manifest`、`NewEntry`、`SnapshotError`、`SnapshotVersionError` |
-| `core/command.py` | 命令返回值的基类和提前结束的方式：suite 或参数有问题（2）、工具自身或文件出错（3），统一退出码、原因和日志 | `CommandReport`、`Stop`、`suite_error`、`internal_error`、`finish_log`、`usage_issue`、`only_issues` |
+| `core/command.py` | 命令返回值的基类和提前结束的方式：suite 或参数有问题（2）、工具自身或文件出错（3），统一退出码、原因和日志；service 和 shapeflow 共用 | `CommandReport`、`Stop`、`suite_error`、`internal_error`、`finish_log`、`usage_issue`、`only_issues` |
+| `core/shape.py` | 字段树：把一条请求的若干个 body 合并成树（`Node`：类型、小数位、长度、示例值、子字段、元素节点），用 `RuleSet.resolve` 标注生效的规则；展示版和骨架两种渲染；在树上算未命中的规则 | `build`、`count_nodes`、`render_tree`、`render_skeleton`、`footer`、`unmatched`、`yaml_key`、`rule_text`、`Node` |
+| `core/shapeflow.py` | shape 命令的流程：加载 suite（不需要环境变量）、读 `--from`（快照或 run 目录的基线）、每条请求建树、打印或写出骨架、退出码 | `shape_sync`、`shape_async`、`ShapeOptions`、`ShapeReport`、`ShapeRequest` |
 | `core/accept.py` | accept 的判定：有序规则表 `ACCEPT_RULES` | `rejection` |
 | `core/executor.py` | 并发执行每条请求：并发名额、取消、进度事件、单条请求的意外异常；run / compare / record 三种模式 | `Executor`、`Executed`、`Targets`、`RequestStarted`、`RequestDone`、`CancelToken` |
 | `core/reportdata.py` | 报告的输入：`result.json` 之外渲染报告要用的信息（参与对比的两侧 sample、请求头名字、带 query 的请求路径，以及报出 finding 的 suite 配置：规则、asserts、生效的 success 和来源，suite 的对比模式），以及 `Reporter`（文件名 + 只在内存里渲染、返回 bytes 的函数） | `ReportInput`、`RequestExtras`、`SuccessSpec`、`Reporter`、`extras_for` |
-| `core/service.py` | 对外编排入口，提供 async 和同步两种调用；命令的前置检查和退出码；本次未命中的规则；调用报告渲染函数 | `validate_suite(_sync)`、`run(_sync)`、`compare(_sync)`、`record(_sync)`、`accept(_sync)`、`RunOptions`、`CompareOptions`、`RecordOptions`、`AcceptOptions`、`RunReport`、`RecordReport`、`AcceptReport` |
-| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令，快照命令在 `snapshot` 子命令组下）、日志初始化 | `main`、`cli`、`validate`、`run`、`snapshot`、`compare`、`record`、`accept`、`demo`、`setup_logging` |
+| `core/service.py` | 对外编排入口，提供 async 和同步两种调用；命令的前置检查和退出码；本次未命中的规则；调用报告渲染函数 | `validate_suite(_sync)`、`run(_sync)`、`compare(_sync)`、`record(_sync)`、`accept(_sync)`、`shape(_sync)`（转发给 `shapeflow`）、`RunOptions`、`CompareOptions`、`RecordOptions`、`AcceptOptions`、`RunReport`、`RecordReport`、`AcceptReport`、`DEFAULT_MAX_KEYS`（从 `shapeflow` 重新导出，CLI 的默认值用它） |
+| `cli.py` | Click 命令行（`cli` 命令组 + 各子命令，快照命令在 `snapshot` 子命令组下）、日志初始化 | `main`、`cli`、`validate`、`run`、`snapshot`、`compare`、`record`、`accept`、`shape`、`demo`、`setup_logging` |
 | `demo/server.py` | 本地演示服务：标准库 `ThreadingHTTPServer`；`/v1`、`/v2` 前缀选数据集，有序路由表 `ROUTES`；Decimal 原样输出；不开 `SO_REUSEADDR`，端口被占用时直接报错 | `make_server`、`base_url`、`dispatch`、`dumps`、`DemoServer`、`DEFAULT_PORT` |
 | `demo/data.py` | 演示数据：v1 固定数据，v2 的每处改动写在 `_v2_*` 函数里 | `DATASETS` |
 | `demo/__init__.py`、`demo/suites/` | 自带的 `pass.yaml`、`regress.yaml`（作为包数据随 wheel 发布）及写出方法 | `suite_text`、`write_suites`、`SUITE_NAMES` |
@@ -328,7 +339,7 @@ flowchart TD
 
 ## snapshot record / compare / accept
 
-命令返回值和提前结束的方式在 `core/command.py`（`CommandReport`、`Stop`、`suite_error`、`internal_error`）。三个命令共用 `service` 里的前置检查（`_load` 按命令需要的 target 加载 suite、`_check_usage` 检查 `--only` 和覆盖地址、`_open_snapshot` / `_compare_snapshot` 处理快照），任何一步不通过都用 `command.Stop` 带着算好的返回值提前结束，**不发请求**。退出码都走 `result.exit_code`：record / accept 的「没写入」用 `ExitState.incomplete` 加 `incomplete_text`。
+命令返回值和提前结束的方式在 `core/command.py`（`CommandReport`、`Stop`、`suite_error`、`internal_error`），shape 也用它们。三个命令共用 `service` 里的前置检查（`_load` 按命令需要的 target 加载 suite、`_check_usage` 检查 `--only` 和覆盖地址、`_open_snapshot` / `_compare_snapshot` 处理快照），任何一步不通过都用 `command.Stop` 带着算好的返回值提前结束，**不发请求**。退出码都走 `result.exit_code`：record / accept 的「没写入」用 `ExitState.incomplete` 加 `incomplete_text`。
 
 ```mermaid
 flowchart TD
@@ -375,6 +386,37 @@ run 目录两侧和快照共用。请求文件只放元数据，每个 sample �
 - **compare 只读**（`readable`）：不调用 `recover`，不删除、不改名任何东西，免得删掉另一个进程正在写的临时目录，或在只读挂载上失败。`snap` 不存在而 `snap.old` 含 `manifest.json` 时（中断在两次 rename 之间）返回 `snap.old` 来读，记 WARNING。
 - **record 一条都没写入时不写快照**，`--clean` 也一样（`service._record` 记 WARNING）：否则基线不可用、token 过期时 `--clean` 会把好的快照换成空的。
 
+## shape（`core/shape.py`、`core/shapeflow.py`）
+
+只读，不发请求。`service.shape(_sync)` 直接转发给 `shapeflow`，流程放在单独的模块里，免得 `service.py` 超过 1000 行。
+
+```mermaid
+flowchart TD
+  S[cli.shape] --> S1["shapeflow._load：load_suite（sides 为空）；规则所在位置缺变量 → 2"]
+  S1 --> S2["_check_usage：--only、--max-keys → 2"]
+  S2 --> S3["_open_source：有 manifest.json → snapshot.load；否则有 result.json → rundir.read_result；都没有、损坏 → 3"]
+  S3 --> S4["每条请求 _build：取样本 → jsonload.load_body → shape.build → count_nodes"]
+  S4 --> S5{--write?}
+  S4 -. "HEAD / body 全为空" .-> S9["_no_body：一行“没有 body，跳过”，不计入 4"]
+  S5 -- 否 --> S6["_tree_lines：标题 + render_tree + footer（写了下标的规则、unmatched）"]
+  S5 -- 是 --> S7["_check_targets（有一个已存在就 2）→ _write_all（render_skeleton）"]
+  S6 --> S8["_exit：有请求没有样本 → 4，否则 0"]
+  S7 --> S8
+```
+
+- **不需要环境变量**：`load_suite(sides=())`，缺失的变量只记录不报错（和 validate 一样），`targets` 里的变量 shape 根本不用。缺失变量的位置落在 `defaults.rules` 或 `requests[i].rules` / `rules_file` 下时，规则没法确定，按 suite 错误（`_RULE_LOC`）；`UnverifiedSuite`（有非字符串字段的值来自缺失变量，拿不到 `Suite`）也按 suite 错误。
+- **样本**：快照用 `snapshot.load` 读要用的请求（`snapshot.readable` 处理中断残留）；run 目录先 `rundir.read_result` 确认是 api-regress 写的，再按请求 `rundir.read_side(…, "baseline", …)`。body 文件的校验和 compare、accept 相同，损坏或旧格式是 3。`_no_body` 先判断没有 body 的请求：HEAD，或者不是网络错误的 sample 至少有一个且 body 全为空（204），记为 `ShapeRequest.skipped`，只打印一行、不建树、不写骨架、**不计入退出码 4**；sample 全是网络错误时不算。其余请求的网络错误、空 body、非 JSON 的 sample 跳过（`_json_bodies`），一个都不剩时这条请求"没有样本"（`ShapeRequest.missing`，计入 4），所以返回 HTML 错误页的请求不会被悄悄跳过。不检查指纹。
+- **合并**（`shape.build`）：每个节点是一个泛化路径；对象的 key 用 dict 按 key 归并（线性，保留第一次出现的顺序），数组的所有元素、所有 sample 并进同一个元素节点，和数组规则无关。按 JSON 类型分发（`_ADDERS`）：数字记小数位（`diff.values.scale`，NaN 不记）和示例，字符串、布尔值记示例，数组记长度。不复用 `diff/schema.py` 的 `build_table`：它产出的是扁平路径，而且受 keyed 等数组规则和 ignore 影响。
+- **树保留全部 key**：被 ignore 的子树、超过 `--max-keys` 的 key 都在树里，只在渲染时跳过；所以未命中的规则按全部 key 算。
+- **渲染**：`_Walker` 遍历出 `Row`（深度、YAML key、节点、`Resolved`；截断提示的 node 为 None），再由 `_lines` 对齐注释（最多到第 `COMMENT_COLUMN_MAX` 列）。对象的 key 缩进一级；元素行 `name[*]` 和数组同级；根节点的元素写 `"[*]"`。根节点不是纯对象、或者根节点上有生效的规则时，第一行是 `# 根节点 $：…` 注释。节点最终 `ignore: true` 时不再往下走。注释由有序的格式化函数表拼成：展示版 `DISPLAY_PARTS`（类型、小数位、长度、示例值）加 `Annotator` 的规则来源；骨架 `SKELETON_PARTS` 只有类型和小数位，**没有示例值和规则**（骨架可能提交到仓库）。小数位全是 0（只有整数）时不列。
+- **key 的写法**（`yaml_key`）：先用 `paths.format_path` 把一级路径写成规则路径（特殊字符的字段名变成 `["x.y"]`），再看它能不能原样作为 YAML 的字符串 key（用 `yaml.safe_load` 试解析：`on`、`null`、`1`、`[`、`*` 开头等都不行），不行就加双引号（需要转义时改单引号，含单引号或控制字符时用 `json.dumps`）。`tests/test_shape.py` 检查每种写法读回来都是同一条路径。有 `lru_cache`：大对象里 key 名大量重复。
+- **生效的规则**：`RuleSet.resolve(泛化路径)`，`Resolved.sources` 里有的属性才列，写成 `属性 ← 来源 规则路径`。来源的写法用 `models.rule_where`，和报告里「命中的规则」是同一个函数。写了字面下标的规则匹配不到 `[*]`，不会出现在树上，在请求末尾单独列出。
+- **未命中的规则**（`shape.unmatched`）：没写下标的规则在树上判断（树的路径就是所有具体路径的泛化，结果和 `rules.unmatched_rules` 逐个 body 遍历相同，节点少得多）；写了下标的规则仍然用 `rules.unmatched_rules` 遍历原始 body。范围是这条请求自己的样本，defaults 的规则也按这条请求算。
+- **骨架里过大的对象**：`render_skeleton` 用 `_Walker(drop_truncated=True)`，key 超过 `max_keys` 的对象一个 key 都不写，只出一行提示（`Row.dropped`）：这种 key 多半是 id、邮箱之类的数据，骨架要提交到仓库。展示版仍然列前 N 个。
+- **`--write`**：`_check_targets` 先检查所有要写的文件（有样本的请求）都不存在（符号链接也算存在），有一个存在就 2、一个都不写；然后逐个用 `open("x")` 写，写到一半失败时删掉本次写出的文件，退出码 3。目录不存在时创建。stdout 每个文件一行 `wrote <path>`，最后一行提示 `rules_file` 的写法（`_hint`）：和 `config` 加载规则文件一样，按**不解析符号链接**的 suite 所在目录算相对路径（`absolute()` 而不是 `resolve()`），`os.path.relpath` 算不出来（Windows 上不在同一个盘）时给绝对路径。
+- **退出码**：2（suite、参数、目标文件已存在）在读样本之前或写文件之前直接返回；3（`--from` 不可用、版本不兼容、损坏、写文件失败）；4 由 `ExitState.incomplete` 给出；0 的原因是"全部输出"。
+- **耗时**（实测，M 系列 Mac）：models.dev 的 `/api.json`（6 MB，合并后 28.3 万个节点）录成 2 个 sample 的快照，`shape` 全程约 2.6 s：解析 2 个 body 0.3 s、建树 0.7 s、渲染（`--max-keys 50`，3 万行）0.4 s、未命中的规则 0.9 s（有一条规则一直没命中时要走完整棵树）。
+
 ## result.json 契约
 
 - 模型在 `core/result.py`（引用 `models.Finding`、`WarningItem`、`Suggestion`），JSON Schema 由 `scripts/export_result_schema.py` 从 `RunResult.model_json_schema(mode="serialization")` 导出到 `schema/result.schema.json`，`tests/test_result_schema.py` 检查它和模型一致，并用 jsonschema 校验一次真实运行的输出。**改模型后重新导出，并在 review 时看 schema 的 diff**；加字段尽量给默认值，改名或删字段要升 `schema_version`。
@@ -390,13 +432,13 @@ run 目录两侧和快照共用。请求文件只放元数据，每个 sample �
 
 ## CLI 约定
 
-- 子命令挂在 `cli` 命令组下：`validate`、`run`、`snapshot`、`demo`；`snapshot` 本身是命令组，下面挂 `record`、`compare`、`accept`，这样顶层只有实时对比的 `run`，和快照有关的都在一处。几个命令共用的参数（`-d` / `--dir`，参数名仍是 `snapshot`；`--only`、`--out`、`--fail-on`、`--format`、suite 参数）定义成模块级的装饰器常量；`--format` 是可重复的选项（和 `--only` 一样），`_parse_formats` 把每个值按逗号拆开、去重前校验（`_format_problem`：未知格式、空值、`none` 和其他格式混用），写错走 `BadParameter`，退出码 2；不写时全部输出，`none` 时返回空列表；`_finish` 统一打印错误或摘要，最后一行总是 `exit N: 原因`。通用参数（`--log-level`、`--log-file`）由装饰器 `common_options` 统一添加；它也负责初始化日志（日志文件打不开返回 3），并把未捕获的异常记为内部错误（退出码 3）。Click 自己的异常（`UsageError`、`Exit`、`Abort`）原样抛出，交给 `main`。
+- 子命令挂在 `cli` 命令组下：`validate`、`run`、`snapshot`、`shape`、`demo`；`snapshot` 本身是命令组，下面挂 `record`、`compare`、`accept`，这样顶层只有实时对比的 `run`，和快照有关的都在一处。几个命令共用的参数（`-d` / `--dir`，参数名仍是 `snapshot`；`--only`、`--out`、`--fail-on`、`--format`、suite 参数）定义成模块级的装饰器常量；`--format` 是可重复的选项（和 `--only` 一样），`_parse_formats` 把每个值按逗号拆开、去重前校验（`_format_problem`：未知格式、空值、`none` 和其他格式混用），写错走 `BadParameter`，退出码 2；不写时全部输出，`none` 时返回空列表；`_finish` 统一打印错误或摘要，最后一行总是 `exit N: 原因`。通用参数（`--log-level`、`--log-file`）由装饰器 `common_options` 统一添加；它也负责初始化日志（日志文件打不开返回 3），并把未捕获的异常记为内部错误（退出码 3）。Click 自己的异常（`UsageError`、`Exit`、`Abort`）原样抛出，交给 `main`。
 - 子命令返回 int 作为退出码。`main` 用 `standalone_mode=False` 调用 Click：子命令返回值和 `ctx.exit(code)` 都会作为返回值传出来；`ClickException`（含参数错误）返回 2，`Abort` 返回 3。
 - 错误和 warning 的位置前缀统一由 `config.format_where` 生成：`suite.yaml:12: requests[0].method:`。
 
 ## 日志
 
 - 标准库 `logging`。`cli.setup_logging` 把 `api_regress` logger 输出到 stderr，`--log-file` 时同时写文件。
-- **INFO 节点**：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）；run 开始的请求数（`service.run`）、每次请求的发出和返回（`runner.Runner`：请求名、target、方法、URL、状态码、耗时、重试次数；发出时只列请求头的**名字**）、每条请求的状态和 finding / warning 数（`flow.evaluate`）、汇总（`service._log_summary`）、写入的每个文件（`service._write_sides`、`service._write_outputs`、`rundir.write_result`）、各命令的退出码及原因（`command.finish_log`，由 `service._finish`、`command.suite_error`、`command.internal_error`、`service._record`、`service._accept` 调用）；record / compare 开始的请求数（`service._record`、`service._paired`）、快照的读取和写入（`snapshot.load`、`snapshot.write`）、残留的删除和恢复（`snapshot.recover`，恢复记 WARNING）、compare 读中断残留（`snapshot.readable`，WARNING）、accept 拒绝的每条请求（`service._accept`）。
+- **INFO 节点**：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）；run 开始的请求数（`service.run`）、每次请求的发出和返回（`runner.Runner`：请求名、target、方法、URL、状态码、耗时、重试次数；发出时只列请求头的**名字**）、每条请求的状态和 finding / warning 数（`flow.evaluate`）、汇总（`service._log_summary`）、写入的每个文件（`service._write_sides`、`service._write_outputs`、`rundir.write_result`）、各命令的退出码及原因（`command.finish_log`，由 `service._finish`、`command.suite_error`、`command.internal_error`、`service._record`、`service._accept`、`shapeflow._shape` 调用）；record / compare 开始的请求数（`service._record`、`service._paired`）、快照的读取和写入（`snapshot.load`、`snapshot.write`）、残留的删除和恢复（`snapshot.recover`，恢复记 WARNING）、compare 读中断残留（`snapshot.readable`，WARNING）、accept 拒绝的每条请求（`service._accept`）；shape 的样本来源和请求数、每条请求的样本数和节点数（或没有样本的原因）、写出的骨架文件、退出码（`shapeflow`），**示例值不进日志**。
 - **WARNING**：validate 的 warning、重试（`runner.Runner._fetch`）。**ERROR**：suite 错误、`--out` / 快照 / run 目录不能用或写入失败（`command.suite_error`、`command.internal_error`）。快照目录不存在时 compare 记 WARNING。**DEBUG**：响应体的前 2KB（`repr` 形式）。
 - **任何级别都不输出请求头的值**：`runner.Call.headers` 只传给 httpx；`Sample`、run 目录、快照、`result.json` 里没有请求头；保存的响应头只有 `Content-Type` 和 `compare_headers`。报错和 warning 只包含字段位置、变量名。`tests/test_cli.py`（validate）、`tests/test_run_cli.py`（run：stdout、stderr、日志文件、run 目录）和 `tests/test_snapshot_cli.py`（record → compare → accept：日志文件、快照、run 目录，响应的 `Set-Cookie` 里也放了哨兵）用哨兵 token 校验；`tests/test_run_cli.py` 的 run 目录里包含三种报告。

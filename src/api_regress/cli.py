@@ -275,6 +275,28 @@ def accept(run_dir: Path, snapshot: Path, only: tuple[str, ...]) -> int:
     return _finish(report, _print_accept)
 
 
+def _print_shape(report: service.ShapeReport) -> None:
+    for line in report.lines:
+        click.echo(line)
+
+
+@cli.command()
+@_SUITE
+@click.option(
+    "--from", "source", required=True, type=click.Path(path_type=Path), help="样本从哪里读：快照目录或 run 目录"
+)
+@_ONLY
+@click.option("--max-keys", type=int, default=service.DEFAULT_MAX_KEYS, show_default=True, help="一个对象最多列出多少个 key")
+@click.option(
+    "--write", type=click.Path(file_okay=False, path_type=Path), help="不打印字段树，改为写出规则文件骨架 DIR/<name>.yaml"
+)
+@common_options
+def shape(suite: str, source: Path, only: tuple[str, ...], max_keys: int, write: Path | None) -> int:
+    """列出每条请求的字段树和生效的规则（读已有的样本，不发请求）。"""
+    options = service.ShapeOptions(source=source, only=list(only), max_keys=max_keys, write=write)
+    return _finish(service.shape_sync(suite, options), _print_shape)
+
+
 def _serve_demo(host: str, port: int) -> int:
     try:
         server = demo_server.make_server(host, port)

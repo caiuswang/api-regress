@@ -26,6 +26,8 @@ import-linter 契约不变：`rulesfile`、`shape`、`shapeflow` 都在 `core` �
 > 规则文件（T8）的展开、重复路径、行号已经实现，约束迁到 `doc/dev/architecture.md` 的「配置加载的关键点」。
 > body 文件（T10）的格式化、扩展名、读取校验、原样复制、accept 的校验已经实现，迁到 `doc/dev/architecture.md` 的「落盘格式」「快照」。
 
+> shape（T9）的环境变量、合并样本、渲染、示例值、截断、`--write` 的约束已经实现，迁到 `doc/dev/architecture.md` 的「shape」。实现和下面原文的差别：缺失变量不用占位值替换（`load_suite(sides=())` 本来就不会因为 `targets` 里的字符串字段缺变量而失败），只检查缺失变量是否落在规则的位置；`defaults` / `requests` 里其他字段缺变量（如 `defaults.headers` 里的 token）不报错，符合 spec §3.1。树用 `slots` dataclass 而不是 pydantic 模型（28 万个节点时构造 pydantic 模型太慢），对外的返回值 `ShapeReport` 是 pydantic 模型。
+
 - **shape 不需要环境变量**：加载 suite 时 `sides=()`，但 validate 的 `UnverifiedSuite` 拿不到 `Suite`。做法：缺失的变量只要都在 `targets` 下，就用占位值替换后再校验（占位值不进任何输出）；`defaults` / `requests` 里有缺失变量时按 suite 错误。
 - **合并样本**：和 `diff/schema.py` 的 schema 表思路一致，但 shape 需要保留嵌套和顺序，单独实现，不要复用 `build_table`（它只产出扁平的泛化路径，而且会受 keyed 等数组规则影响）。所有数组一律按元素合并，和数组规则无关；数组规则只用来标注。
 - **复杂度**：渲染一行的各部分（类型、小数位、长度、示例、规则）用有序的格式化函数表拼接，避免长 if 链；CC ≤ 10。
