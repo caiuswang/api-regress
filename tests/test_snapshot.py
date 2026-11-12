@@ -10,7 +10,7 @@ import jsonschema
 import pytest
 
 from api_regress.core import snapshot
-from api_regress.core.samples import SampleFormatError, from_record, parse_side_document
+from api_regress.core.samples import SampleFormatError, from_record
 from tests.mock_api import JSON, Reply, Server, accept, compare, j, only, record, req, suite_text, types
 
 OK = {"code": 0, "data": {"id": 1, "amount": "12.50"}}
@@ -23,6 +23,12 @@ def _manifest(tmp_path: Path) -> dict:
 
 def _entry(tmp_path: Path, name: str) -> dict:
     return json.loads((tmp_path / "snap" / "requests" / f"{name}.json").read_text())
+
+
+def _body(tmp_path: Path, name: str, index: int = 0) -> bytes:
+    """快照里第 index 个 sample 的 body 文件内容。"""
+    sample = _entry(tmp_path, name)["samples"][index]
+    return (tmp_path / "snap" / "samples" / name / sample["body_file"]).read_bytes()
 
 
 def _record_ok(tmp_path: Path, text: str, body=OK, **opts):
@@ -60,19 +66,21 @@ def test_snapshot_layout_and_manifest(tmp_path):
     assert entry["name"] == "a" and entry["fingerprint"] == meta["fingerprint"]
     sample = entry["samples"][0]
     assert set(sample["headers"]) == {"content-type", "x-ver"}  # 只保存 Content-Type 和 compare_headers
-    assert json.loads(sample["body"]) == OK
+    assert sample["body_file"] == "1.json" and sample["body_formatted"] is True
+    assert json.loads(_body(tmp_path, "a")) == OK
+    assert "body" not in sample and "body_b64" not in sample
     assert {"status", "url", "elapsed_ms", "retries"} <= set(sample)
 
 
-def test_record_keeps_raw_body_and_non_utf8_as_base64(tmp_path):
+def test_record_formats_json_keeping_scale_and_binary_as_is(tmp_path):
     raw = b'{"price": 12.50}'
     binary = b"\xff\xfe\x00"
     server = Server().on("base", "/x", Reply(body=raw)).on("base", "/y", Reply(body=binary, content_type="application/octet-stream"))
     report = record(tmp_path, suite_text(req("a") + req("b", "/y")), server)
     assert report.exit_code == 0
-    assert _entry(tmp_path, "a")["samples"][0]["body"] == raw.decode()  # 原文，保留 12.50 的末尾 0
+    assert _body(tmp_path, "a") == b'{\n  "price": 12.50\n}\n'  # 缩进格式化，保留 12.50 的末尾 0
     b = _entry(tmp_path, "b")["samples"][0]
-    assert "body" not in b and parse_side_document(_entry(tmp_path, "b")).samples[0].body == binary
+    assert (b["body_file"], b["body_formatted"]) == ("1.bin", False) and _body(tmp_path, "b") == binary
 
 
 def test_compare_uses_snapshot_suggestions(tmp_path):
@@ -206,7 +214,7 @@ def test_record_only_updates_only_that_request(tmp_path):
     assert report.exit_code == 0 and report.written == ["a"] and server.count("base", "/y") == 0
     assert (tmp_path / "snap" / "requests" / "b.json").read_bytes() == before_b
     assert _manifest(tmp_path)["requests"]["b"] == meta_b
-    assert json.loads(_entry(tmp_path, "a")["samples"][0]["body"]) == {"code": 0, "new": 1}
+    assert json.loads(_body(tmp_path, "a")) == {"code": 0, "new": 1}
 
 
 @pytest.mark.parametrize(
@@ -228,7 +236,7 @@ def test_record_failure_keeps_old_sample(tmp_path, reply, hint):
     [missing] = report.not_written
     assert missing.name == "a" and hint in missing.reason
     assert (tmp_path / "snap" / "requests" / "a.json").read_bytes() == before
-    assert json.loads(_entry(tmp_path, "b")["samples"][0]["body"]) == {"code": 0, "v": 2}
+    assert json.loads(_body(tmp_path, "b")) == {"code": 0, "v": 2}
 
 
 def test_record_all_failed_without_snapshot_writes_nothing(tmp_path):
@@ -360,7 +368,7 @@ def test_write_failure_leaves_old_snapshot_intact(tmp_path, monkeypatch):
     text = suite_text(req("a") + req("b", "/y"))
     _record_ok(tmp_path, text)
     before = {p.name: p.read_bytes() for p in (tmp_path / "snap").rglob("*.json")}
-    real = snapshot.side_document
+    real = snapshot.write_side_file
     calls = []
 
     def failing(*args, **kwargs):
@@ -369,7 +377,7 @@ def test_write_failure_leaves_old_snapshot_intact(tmp_path, monkeypatch):
             raise OSError(28, "No space left on device")
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(snapshot, "side_document", failing)
+    monkeypatch.setattr(snapshot, "write_side_file", failing)
     report = record(tmp_path, text, Server().on("base", "/x", j({"v": 1})).on("base", "/y", j({"v": 2})))
     assert report.exit_code == 3 and "无法写入快照" in report.exit_reason
     assert {p.name: p.read_bytes() for p in (tmp_path / "snap").rglob("*.json")} == before
@@ -436,7 +444,7 @@ def test_rewrite_existing_snapshot_replaces_atomically(tmp_path):
     text = suite_text(req("a"))
     _record_ok(tmp_path, text)
     _record_ok(tmp_path, text, body={"v": 2})
-    assert json.loads(_entry(tmp_path, "a")["samples"][0]["body"]) == {"v": 2}
+    assert json.loads(_body(tmp_path, "a")) == {"v": 2}
     assert [p.name for p in tmp_path.iterdir() if "snap" in p.name] == ["snap"]
 
 
@@ -456,7 +464,7 @@ def test_accept_only_updates_that_request(tmp_path):
     before_b = (tmp_path / "snap" / "requests" / "b.json").read_bytes()
     report = accept(tmp_path, only=["a"])
     assert report.exit_code == 0 and report.accepted == ["a"] and report.rejected == []
-    assert json.loads(_entry(tmp_path, "a")["samples"][0]["body"]) == new
+    assert json.loads(_body(tmp_path, "a")) == new
     assert (tmp_path / "snap" / "requests" / "b.json").read_bytes() == before_b
 
 
@@ -636,20 +644,35 @@ def test_s2_3e_accept_intended_change(s2):
         {"url": "u", "elapsed_ms": "1"},
         {"url": "u", "error": 3},
         {"url": "u", "headers": []},
-        {"url": "u", "body": 1},
-        {"url": "u", "body": "\ud800"},
-        {"url": "u", "body_b64": "!!"},
-        {"url": "u", "body_b64": 3},
+        {"url": "u", "body": "{}"},  # 旧格式
+        {"url": "u", "body_b64": "e30="},  # 旧格式
+        {"url": "u", "body_size": -1},
+        {"url": "u", "body_size": True},
+        {"url": "u", "body_size": 2},  # 有大小却没有 body_file
+        {"url": "u", "body_file": "../x.json", "body_size": 2},
+        {"url": "u", "body_file": "2.json", "body_size": 2},  # 第 1 个 sample 只能是 1.*
+        {"url": "u", "body_file": "1.html", "body_size": 2},
+        {"url": "u", "body_file": 1, "body_size": 2},
+        {"url": "u", "body_file": "1.json", "body_size": 2, "body_sha256": "0"},  # 文件不存在
     ],
 )
-def test_from_record_bad_data_raises_sample_format_error(record_):
+def test_from_record_bad_data_raises_sample_format_error(record_, tmp_path):
     with pytest.raises(SampleFormatError):
-        from_record(record_)
+        from_record(record_, 0, tmp_path)
 
 
-def test_from_record_round_trip():
-    sample = from_record({"url": "u", "status": 200, "headers": {"Content-Type": JSON}, "body": "{}", "elapsed_ms": 1.5})
+def test_from_record_checks_size_and_hash(tmp_path):
+    import hashlib
+
+    (tmp_path / "1.json").write_bytes(b"{}")
+    good = {"url": "u", "status": 200, "headers": {"Content-Type": JSON}, "body_file": "1.json", "body_size": 2,
+            "body_sha256": hashlib.sha256(b"{}").hexdigest(), "elapsed_ms": 1.5}  # fmt: skip
+    sample = from_record(good, 0, tmp_path)
     assert (sample.status, sample.content_type, sample.body, sample.elapsed_ms) == (200, JSON, b"{}", 1.5)
+    with pytest.raises(SampleFormatError, match="SHA-256"):
+        from_record({**good, "body_sha256": "0" * 64}, 0, tmp_path)
+    with pytest.raises(SampleFormatError, match="SHA-256"):
+        from_record({**good, "body_size": 3}, 0, tmp_path)
 
 
 # ---------- code review 修复的回归用例 ----------
@@ -712,7 +735,7 @@ def test_old_snapshot_cleanup_failure_is_only_warning(tmp_path, monkeypatch, cap
     monkeypatch.setattr(snapshot.shutil, "rmtree", failing)
     report = _record_ok(tmp_path, text, body={"v": 2})
     assert report.exit_code == 0 and "删除旧快照" in caplog.text
-    assert json.loads(_entry(tmp_path, "a")["samples"][0]["body"]) == {"v": 2}
+    assert json.loads(_body(tmp_path, "a")) == {"v": 2}
     assert (tmp_path / "snap.old").is_dir()
     monkeypatch.setattr(snapshot.shutil, "rmtree", real)
     _record_ok(tmp_path, text)

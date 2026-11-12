@@ -49,7 +49,7 @@ from api_regress.core.result import (
     run_exit_state,
 )
 from api_regress.core.rules import RuleSet, static_warnings
-from api_regress.core.samples import SampleFormatError, fingerprint
+from api_regress.core.samples import LegacyFormatError, SampleFormatError, fingerprint
 
 __all__ = [
     "AcceptOptions", "AcceptReport", "CancelToken", "CompareOptions", "OnEvent", "ProgressEvent", "RecordOptions",
@@ -605,6 +605,8 @@ def _judge_accept(run_dir: Path, req: RequestResult) -> tuple[snapshot.NewEntry 
     """返回 (要写入的条目, 拒绝原因, run 目录是否损坏)。"""
     try:
         side = rundir.read_side(run_dir, "candidate", req.name)
+    except LegacyFormatError as exc:
+        return None, f"run 目录里的候选响应{exc}，请重新运行 run 或 snapshot compare", True
     except SampleFormatError as exc:
         return None, f"run 目录里的候选响应损坏：{exc}", True
     samples = side.samples if side is not None else []

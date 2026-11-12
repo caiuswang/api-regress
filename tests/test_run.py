@@ -381,15 +381,17 @@ def test_run_dir_layout(tmp_path):
     server = Server().on("base", "/x", base).on("cand", "/x", Reply(body=b"\xff\xfe", content_type="application/octet-stream"))
     report = run(tmp_path, suite_text(req("a", extra=extra)), server)
     out = Path(report.out_dir)
-    assert sorted(p.relative_to(out).as_posix() for p in out.rglob("*.json")) == [
+    assert sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()) == [
         "baseline/a.json", "candidate/a.json", "result.json",
+        "samples/baseline/a/1.json", "samples/baseline/a/2.json", "samples/candidate/a/1.bin",
     ]  # fmt: skip
     base_file = json.loads((out / "baseline" / "a.json").read_text())
     assert len(base_file["samples"]) == 2 and base_file["fingerprint"] == only(report).fingerprint
     assert base_file["samples"][0]["headers"] == {"content-type": JSON, "x-version": "1"}
-    assert base_file["samples"][0]["body"] == '{"a": 1}'
+    assert (out / "samples" / "baseline" / "a" / "1.json").read_bytes() == b'{\n  "a": 1\n}\n'
     cand_file = json.loads((out / "candidate" / "a.json").read_text())
-    assert cand_file["samples"][0]["body_b64"] == "//4="
+    assert cand_file["samples"][0]["body_file"] == "1.bin"
+    assert (out / "samples" / "candidate" / "a" / "1.bin").read_bytes() == b"\xff\xfe"
 
 
 def test_out_dir_reuse_rules(tmp_path):

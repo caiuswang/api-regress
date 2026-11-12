@@ -246,7 +246,7 @@ def test_only_selected_formats_are_written(tmp_path):
     report = run(tmp_path, suite_text(req("a")), server, reporters=report_pkg.reporters(["md"]))
     out = tmp_path / "out"
     assert report.exit_code == 0 and report.reports == [str(out / "report.md")]
-    assert sorted(p.name for p in out.iterdir()) == ["baseline", "candidate", "report.md", "result.json"]
+    assert sorted(p.name for p in out.iterdir()) == ["baseline", "candidate", "report.md", "result.json", "samples"]
 
 
 def test_reused_run_dir_drops_stale_reports(tmp_path):

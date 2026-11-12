@@ -72,19 +72,20 @@ flowchart LR
 | `core/expr.py` | success / asserts 表达式：AST 白名单编译、simpleeval 求值、计算量预算；重新导出 `expr_values` 的视图类 | `compile_expr`、`eval_success`、`eval_assert`、`Outcome` |
 | `core/expr_values.py` | 表达式里的值怎么运算：只读视图、JSON 语义的相等与包含、内置函数、运算符；类型不匹配一律抛 `ExprEvalError` | `JsonView`、`HeadersView`、`SideView`、`json_equal`、`contains`、`FUNCTIONS`、`OPERATORS`、`type_name` |
 | `core/rules.py` | 规则按属性合并、ignore 剪枝、静态无效规则检测、本次未命中的规则 | `RuleSet.resolve`、`RuleSet.is_pruned`、`static_warnings`、`unmatched_rules` |
+| `core/jsonfmt.py` | 把 `jsonload` 解析出的值写回 JSON 文本，数字按原文的小数位输出；报告的 body 对照和落盘的 body 文件共用 | `pretty_json`、`compact_json` |
 | `core/jsonload.py` | 判断 body 是否为 JSON、按 charset 解码、去 BOM、Decimal 解析、重复 key / NaN / 嵌套过深 | `load_body`、`parse_json`、`is_json_media`、`media_type`、`charset_of` |
 | `core/diff/walker.py` | 对比入口；按 JSON 类型分发；字段缺失、类型、可空性、decimal、值比较 | `diff_json`、`visit`、`DiffResult` |
 | `core/diff/arrays.py` | 四种数组模式的分发表 `_MODES`；keyed 配对与降级、positional、unordered（结构交给 schema，值按多重集合） | `compare_array` |
 | `core/diff/schema.py` | 不配对地比较元素：扁平表（路径 → 类型集合、小数位集合）及其比较；数组长度 finding | `compare_schema`、`compare_elements`、`build_table`、`report_length` |
 | `core/diff/context.py` | 一次对比的上下文：规则、对比模式、finding / warning 收集，`Presence`（字段 / 元素缺失用哪种 finding） | `DiffContext.report`、`DiffContext.warn`、`DiffContext.where`、`DiffContext.value_level` |
 | `core/diff/values.py` | JSON 类型、小数位、标量相等、标量的规范形式（keyed 的 key、unordered 的元素） | `json_type`、`scale`、`scale_of`、`decimal_text`、`scalar_equal`、`canon_scalar` |
-| `core/samples.py` | sample 的内存表示（`Sample`，响应头名字小写）、落盘格式（只留 `Content-Type` 和 `compare_headers`，body 存原文或 `body_b64`）、一条请求的文件（run 目录两侧和快照共用）、请求指纹 | `Sample`、`to_record`、`from_record`、`side_document`、`parse_side_document`、`dump_json`、`SideFile`、`SampleFormatError`、`kept_headers`、`fingerprint`、`FINGERPRINT_VERSION` |
+| `core/samples.py` | sample 的内存表示（`Sample`，响应头名字小写）；落盘格式：请求文件（只留 `Content-Type` 和 `compare_headers`，sample 用 `body_file` 引用 body 文件）和 body 文件（JSON 缩进格式化或原始字节）的写入、读回与校验，run 目录两侧和快照共用；请求指纹 | `Sample`、`to_record`、`from_record`、`write_side_file`、`parse_side_document`、`stored_body`、`formatted_json`、`dump_json`、`SideFile`、`SampleFormatError`、`LegacyFormatError`、`kept_headers`、`fingerprint`、`FINGERPRINT_VERSION` |
 | `core/runner.py` | 发请求：URL 拼接、请求头合并、`httpx.AsyncClient` + 信号量、自己实现的重试 | `make_call`、`build_url`、`merge_headers`、`Runner.fetch`、`describe_error`、`new_client` |
 | `core/status.py` | 请求状态判定：有序规则表 `STATUS_RULES`；快照问题的枚举和提示 | `judge`、`Facts`、`RequestStatus`、`SnapshotProblem`、`SNAPSHOT_PROBLEM_TEXT`、`AUTH_OR_LIMIT` |
 | `core/flow.py` | 单条请求的对比流程：状态 → 状态码 → success → 响应头 → body → asserts → 不稳定字段建议；填 `finding_id`；record 只看基线的判定 | `evaluate`、`evaluate_baseline`、`Plan`、`Evaluation` |
 | `core/diff/unstable.py` | 不稳定字段建议：基线两个 sample 按 `compare: values` 对比后过滤 | `suggest_unstable`、`ignore_snippet` |
 | `core/result.py` | `result.json` 的数据模型；退出码谓词表 `EXIT_RULES` | `RunResult`、`RequestResult`、`SampleInfo`、`Summary`、`UnmatchedRule`、`exit_code`、`run_exit_state` |
-| `core/rundir.py` | run 目录：默认目录名、复用规则、两侧响应和 `result.json` 的写入；accept 读回 | `default_out_dir`、`check`、`prepare`、`write_side`、`write_result`、`read_result`、`read_side` |
+| `core/rundir.py` | run 目录：默认目录名、复用规则、两侧请求文件和 body 文件（`samples/<side>/<name>/`）、`result.json` 的写入；accept 读回 | `default_out_dir`、`check`、`prepare`、`write_side`、`body_dir`、`write_result`、`read_result`、`read_side` |
 | `core/snapshot.py` | 快照：manifest 模型、读（含版本检查）、写前检查、按请求合并、原子替换、残留恢复 | `load`、`readable`、`check_writable`、`write`、`recover`、`Snapshot`、`Manifest`、`NewEntry`、`SnapshotError`、`SnapshotVersionError` |
 | `core/accept.py` | accept 的判定：有序规则表 `ACCEPT_RULES` | `rejection` |
 | `core/executor.py` | 并发执行每条请求：并发名额、取消、进度事件、单条请求的意外异常；run / compare / record 三种模式 | `Executor`、`Executed`、`Targets`、`RequestStarted`、`RequestDone`、`CancelToken` |
@@ -95,7 +96,7 @@ flowchart LR
 | `demo/data.py` | 演示数据：v1 固定数据，v2 的每处改动写在 `_v2_*` 函数里 | `DATASETS` |
 | `demo/__init__.py`、`demo/suites/` | 自带的 `pass.yaml`、`regress.yaml`（作为包数据随 wheel 发布）及写出方法 | `suite_text`、`write_suites`、`SUITE_NAMES` |
 | `report/__init__.py` | 格式名到 `Reporter` 的表 `FORMATS`；`--format none` 的名字 `NONE` | `reporters`、`FORMATS`、`NONE` |
-| `report/common.py` | 几种报告共用的展示逻辑：finding 的值怎么显示、curl 复现命令、状态码、规则引用、body 的展示文本（按原文小数位排版 JSON） | `finding_values`、`rules_text`、`rule_where`、`finding_note`、`rule_attrs_text`、`curl_command`、`side_views`、`body_text`、`pretty_json`、`compact_json`、`status_codes`、`failing` |
+| `report/common.py` | 几种报告共用的展示逻辑：finding 的值怎么显示、curl 复现命令、状态码、规则引用、body 的展示文本（按原文小数位排版 JSON） | `finding_values`、`rules_text`、`rule_where`、`finding_note`、`rule_attrs_text`、`curl_command`、`side_views`、`body_text`、`pretty_json` / `compact_json`（从 `core.jsonfmt` 导入）、`status_codes`、`failing` |
 | `report/html.py`、`report/templates/report.html.j2` | `report.html`：Jinja2（autoescape），body 对照的截断 | `render`、`body_diff` |
 | `report/sidediff.py` | 两侧文本的并排对照表格（HTML，已转义）：行级对齐 + 有上限的行内高亮 | `table`、`row_groups` |
 | `report/md.py` | `report.md` | `render`、`cell` |
@@ -263,7 +264,7 @@ flowchart TD
   X2 -->|意外异常| CR["executor._crashed：这条记 error，内部错误"]
   F --> R["_finish：_unmatched 汇总、退出码、Summary、RunResult"]
   CR --> R
-  R --> W["_write_sides：rundir.prepare → baseline/、candidate/"]
+  R --> W["_write_sides：rundir.prepare → baseline/、candidate/、samples/"]
   W -->|OSError| E3["退出码 3"]
   W --> RP["_render_reports：在内存里渲染 RunOptions.reporters"]
   RP -->|有报告生成失败| E3b["结果改成退出码 3，其余报告用新结果重新渲染"]
@@ -303,10 +304,10 @@ flowchart TD
 ### run 目录（`rundir.py`）
 
 - `default_out_dir`：`api-regress-out/<YYYYmmdd-HHMMSS>`，已存在时加 `-2`、`-3`。
-- `check`：已存在的非空目录必须是之前的 run 目录才能用：`result.json` 能解析，并且有 `schema_version`、`command`、`tool_version`（`_written_by_us`）；或者是上次中途失败留下的（`_is_leftover`：没有 `result.json`，只有两侧目录和报告，两侧目录里只有 `.json` 文件）；`ignore` 里的文件（`RunOptions.log_file`，CLI 的 `--log-file`）不算。不满足抛 `RunDirError`（`OSError` 子类）。`service.run` / `service.compare` 在发请求之前调用，失败直接返回退出码 3。
-- `prepare`：写入前再 `check` 一次，然后**先删旧的 `result.json`**，再删 `baseline/`、`candidate/` 和 `REPORT_FILES` 列出的旧报告（记 INFO 日志）。`result.json` 最后才写，所以本次中途失败或被打断时目录里没有 `result.json`：不会出现旧结果配新响应，`accept` 的 `read_result` 也会拒绝这个目录；`_is_leftover` 让这样的目录下次还能复用。删旧报告是免得 `--format` 变了以后留下和本次结果对不上的报告。不对 `--out` 本身做目录交换，避免 `--out .` 之类的误用删掉无关文件。
-- `write_side`：`<side>/<name>.json`，内容由 `samples.side_document` 生成：`name`、`fingerprint`、`fingerprint_version` 和 `samples`（`samples.to_record`）。先写两侧，再写报告，最后写 `result.json`。
-- `read_result` / `read_side`：accept 读回 run 目录。`read_result` 要求 `_written_by_us`、能按 `RunResult` 解析、请求名都符合 `config.NAME_PATTERN`（请求名会拼进文件路径，防止改过的 `result.json` 穿出目录），否则抛 `RunDirError`；`read_side` 文件不存在返回 `None`，格式不对抛 `SampleFormatError`。
+- `check`：已存在的非空目录必须是之前的 run 目录才能用：`result.json` 能解析，并且有 `schema_version`、`command`、`tool_version`（`_written_by_us`）；或者是上次中途失败留下的（`_is_leftover`：没有 `result.json`，只有两侧目录、`samples/` 和报告，两侧目录里只有 `.json` 文件，`samples/` 里不限）；`ignore` 里的文件（`RunOptions.log_file`，CLI 的 `--log-file`）不算。不满足抛 `RunDirError`（`OSError` 子类）。`service.run` / `service.compare` 在发请求之前调用，失败直接返回退出码 3。
+- `prepare`：写入前再 `check` 一次，然后**先删旧的 `result.json`**，再删 `baseline/`、`candidate/`、`samples/` 和 `REPORT_FILES` 列出的旧报告（记 INFO 日志）。`result.json` 最后才写，所以本次中途失败或被打断时目录里没有 `result.json`：不会出现旧结果配新响应，`accept` 的 `read_result` 也会拒绝这个目录；`_is_leftover` 让这样的目录下次还能复用。删旧报告是免得 `--format` 变了以后留下和本次结果对不上的报告。不对 `--out` 本身做目录交换，避免 `--out .` 之类的误用删掉无关文件。
+- `write_side`：`<side>/<name>.json` 和 body 目录 `samples/<side>/<name>/`（`body_dir`），由 `samples.write_side_file` 写：先写 body 文件，再写请求文件（`name`、`fingerprint`、`fingerprint_version` 和 `samples`，见下文「落盘格式」）。先写两侧，再写报告，最后写 `result.json`。
+- `read_result` / `read_side`：accept 读回 run 目录。`read_result` 要求 `_written_by_us`、能按 `RunResult` 解析、请求名都符合 `config.NAME_PATTERN`（请求名会拼进文件路径，防止改过的 `result.json` 穿出目录），否则抛 `RunDirError`；`read_side` 请求文件不存在返回 `None`，格式不对、body 文件缺失或对不上抛 `SampleFormatError`（旧格式抛它的子类 `LegacyFormatError`，`service._judge_accept` 据此提示重新运行）。
 
 ### 退出码（`result.py`）
 
@@ -346,16 +347,27 @@ flowchart TD
 - **执行器**（`executor.py`）：`Executor` 按 `Mode` 选择 `_run` / `_compare` / `_record`，并发名额、取消、进度事件和意外异常的处理三种模式完全一样（见上文 run 主流程）。`Targets` 带着覆盖地址和快照。
 - **compare 的基线**：`Snapshot.baseline` 返回快照里的 sample 和 `SnapshotProblem`：没有这条请求时是 `([], "missing")`，指纹或 `fingerprint_version` 不一致时照样返回 sample 加 `fingerprint_mismatch`。`flow.evaluate` 在基线为空时用占位 sample `_NO_BASELINE` 走判定：`STATUS_RULES` 里快照问题排在网络错误之后、其他规则之前，所以占位 sample 不会影响结果，候选网络错误仍然判 `error`。有快照问题且状态是 `inconclusive` 时额外对候选求一次 success（`_Flow.candidate_success`），写进 `RequestResult.candidate_success`。`_compare` 在 `status_changed` 后结束前也调用一次（`warn=False`：这条请求不报 success 相关的 warning），否则状态码变了、候选又不满足 success 的响应会被 accept 收进快照。
 - **record 的判定**（`flow.evaluate_baseline`）：`_Flow` 的候选为 `None` 时指向基线，`Facts` 两侧都放基线，复用 `STATUS_RULES`：提示里的"哪一侧"都会是基线。`ok` / `unsupported` 才写入；第 2 个 sample 由 `_Flow.second_sample` 判断能不能用（不能用时给 `second_sample_unavailable`，只写第 1 个），两个都是 JSON 时算不稳定字段建议。
-- **accept 的判定**（`accept.py`）：`ACCEPT_RULES` 是 `(谓词, 原因)` 的有序表，按 record 的标准检查候选本身（网络错误、401/403/429、5xx、不满足 success），再加上请求状态（`error`、非快照原因的 `inconclusive`）。只用 run 目录里的信息：`RequestResult.status`、`snapshot_problem`、`candidate_success`、`findings` 里的 `business_error`，以及 `candidate/<name>.json` 的 sample 和指纹。候选文件损坏时拒绝这条并记为内部错误（退出码 3）。写进快照时 `compare_headers` 用候选 sample 现有的响应头名字（落盘时已经过滤过）。
+- **accept 的判定**（`accept.py`）：`ACCEPT_RULES` 是 `(谓词, 原因)` 的有序表，按 record 的标准检查候选本身（网络错误、401/403/429、5xx、不满足 success），再加上请求状态（`error`、非快照原因的 `inconclusive`）。只用 run 目录里的信息：`RequestResult.status`、`snapshot_problem`、`candidate_success`、`findings` 里的 `business_error`，以及 `candidate/<name>.json` 的 sample 和指纹。候选的请求文件或 body 文件损坏时拒绝这条并记为内部错误（退出码 3）。被接受的候选按读出的 sample 重新写进快照；格式化是幂等的，写出的 body 文件和 run 目录里的逐字节相同。写进快照时 `compare_headers` 用候选 sample 现有的响应头名字（落盘时已经过滤过）。
+
+## 落盘格式（`core/samples.py`）
+
+run 目录两侧和快照共用。请求文件只放元数据，每个 sample 的 body 单独一个文件，放在调用方给的 body 目录里（快照 `samples/<name>/`，run 目录 `samples/<side>/<name>/`）。
+
+- **请求文件**：`name`、`fingerprint`、`fingerprint_version`、`samples[]`。sample 是 `url`、`status`、`headers`、`body_file`、`body_formatted`、`body_size`、`body_sha256`、`elapsed_ms`、`retries`；body 为空时只有 `body_size: 0`；网络错误只有 `url`、`status`（null）、`error`、`retries`。
+- **body 文件名**：`<序号>.<扩展名>`，序号从 1 开始、等于 sample 的位置。读回时先用 `BODY_FILE` 正则和序号检查 `body_file`（`_check_body_file`），**通过后才拼路径**，所以改过的请求文件写不出指向别处的路径；再核对大小和 SHA-256。
+- **格式化**（`stored_body` / `formatted_json`）：Content-Type 是 JSON（`jsonload.is_json_media`）时，用 `jsonload.load_body` 解析、`jsonfmt.pretty_json` 输出。例外存原始字节：charset 不是 UTF-8（`codecs.lookup(charset_of(...)).name`）、解析失败、有 `duplicate_key`。最后**自检**：把格式化结果重新 `load_body`，`repr(value)`（能区分 `Decimal('12.50')` 和 `Decimal('12.5')`，也能比较 `NaN`）和 warning code 列表都和原文相同才用，否则存原始字节。所以对比引擎从格式化文件里读到的值和 warning 与原始响应完全一样。格式化是幂等的（再格式化一次结果不变）。
+- **扩展名**：JSON 响应 `.json`（不论是否格式化）；否则能按 UTF-8 严格解码为 `.txt`，不能为 `.bin`。读回时不看扩展名。
+- **旧格式**：sample 里有 `body` / `body_b64` 时抛 `LegacyFormatError`（`SampleFormatError` 的子类），快照和 accept 各自给出重录或重新运行的提示。快照 `schema_version` 仍是 1。
+- **写入顺序**（`write_side_file`）：先写 body 文件，最后写请求文件。
 
 ## 快照（`core/snapshot.py`）
 
-- **格式**：`manifest.json`（`Manifest`：`schema_version`、`tool_version`、`fingerprint_version`、`updated_at`、`requests: {name: ManifestEntry}`，`ManifestEntry` 是 `fingerprint`、`recorded_at`、`source`、`samples`）和 `requests/<name>.json`（`samples.side_document`，和 run 目录的两侧文件相同）。manifest 是索引；指纹以请求文件里的为准。
-- **读**（`load`）：目录不存在、或是空目录，当作空快照；有内容但没有 `manifest.json` 抛 `SnapshotError`。`_read_manifest` 先单独看 `schema_version`：是整数但不是当前版本时抛 `SnapshotVersionError`（退出码 2），再用 pydantic 校验（失败算损坏，退出码 3），请求名也要符合 `config.NAME_PATTERN`。只读本次要用的请求文件，`_read_entry` 用 `parse_side_document` 解析，格式错误、`name` 不对、没有 sample 都算损坏。`samples.from_record` 对任何坏数据都抛 `SampleFormatError`（不会漏出 `TypeError` / `ValueError`）。
+- **格式**：`manifest.json`（`Manifest`：`schema_version`、`tool_version`、`fingerprint_version`、`updated_at`、`requests: {name: ManifestEntry}`，`ManifestEntry` 是 `fingerprint`、`recorded_at`、`source`、`samples`）、`requests/<name>.json` 和 `samples/<name>/`（`samples.write_side_file`，和 run 目录的两侧文件相同）。manifest 是索引；指纹以请求文件里的为准。
+- **读**（`load`）：目录不存在、或是空目录，当作空快照；有内容但没有 `manifest.json` 抛 `SnapshotError`。`_read_manifest` 先单独看 `schema_version`：是整数但不是当前版本时抛 `SnapshotVersionError`（退出码 2），再用 pydantic 校验（失败算损坏，退出码 3），请求名也要符合 `config.NAME_PATTERN`。只读本次要用的请求文件，`_read_entry` 用 `parse_side_document` 解析（同时读回并校验 `samples/<name>/` 里的 body 文件），格式错误、body 文件缺失或对不上、`name` 不对、没有 sample 都算损坏；旧格式（`LegacyFormatError`）在消息里提示 `snapshot record --clean`。`samples.from_record` 对任何坏数据都抛 `SampleFormatError`（不会漏出 `TypeError` / `ValueError`）。
 - **写前检查**（`check_writable`）：已存在的非空目录必须含 `manifest.json`（`_is_snapshot_dir`）；不是 `--clean` 时读 manifest，并检查它列出的请求文件都存在；不解析这些文件，`_fill` 按字节原样复制没变的那些（大快照上 `snapshot record --only x` 不必把每个 body 都解一遍），内容坏了由 compare 的 `load` 报。返回现有的 `Manifest` 作为合并的底。
 - **异常 → 退出码**：`service._snapshot_step` 统一把快照操作的 `SnapshotVersionError` 换成退出码 2、其他 `OSError`（含 `SnapshotError`）换成 3；`_open_snapshot`（record / accept）、`_compare_snapshot`、`_save` 都经过它。
-- **JSON 格式**：run 目录和快照的文件都用 `samples.dump_json` 写（UTF-8、不转义非 ASCII、缩进 2、末尾换行），两边格式不会分叉。
-- **写**（`write`）：`_merged_manifest` 合并索引（本次的条目覆盖同名的旧条目，按 name 排序）；`_fill` 在 `tempfile.mkdtemp(prefix=".<name>.tmp-", dir=父目录)` 里复制没变的请求文件（`shutil.copy2`，不重新序列化）、写入新的请求文件和 manifest；`_swap` 做 `snap → snap.old`、`tmp → snap`、删 `snap.old`；最后一步失败时新快照已经就位，只记 WARNING，留给下次 `recover` 删。不能直接 `os.replace` 到已存在的非空目录（`ENOTEMPTY`），所以要先把旧目录挪开。任何 `OSError` 都删掉临时目录、转成 `SnapshotError`，旧快照不受影响。
+- **JSON 格式**：run 目录和快照的请求文件、manifest 都用 `samples.dump_json` 写（UTF-8、不转义非 ASCII、缩进 2、末尾换行），两边格式不会分叉。
+- **写**（`write`）：`_merged_manifest` 合并索引（本次的条目覆盖同名的旧条目，按 name 排序）；`_fill` 在 `tempfile.mkdtemp(prefix=".<name>.tmp-", dir=父目录)` 里复制没变的请求（`_copy_entry`：请求文件 `shutil.copy2`，body 目录 `shutil.copytree`，都不解析；body 目录不存在时只复制请求文件）、写入新的请求文件和 body 文件、manifest；`_swap` 做 `snap → snap.old`、`tmp → snap`、删 `snap.old`；最后一步失败时新快照已经就位，只记 WARNING，留给下次 `recover` 删。不能直接 `os.replace` 到已存在的非空目录（`ENOTEMPTY`），所以要先把旧目录挪开。任何 `OSError` 都删掉临时目录、转成 `SnapshotError`，旧快照不受影响。
 - **残留**（`recover`，record / accept 开始时调用）：路径先 `resolve()`（这样 `--dir .` 也有名字）。`snap.old` 存在时：没有 `manifest.json` 说明不是我们留下的，报错；`snap` 不存在说明中断在两次 rename 之间，把 `.old` 恢复回来；否则删掉 `.old`。最后删掉同级的 `.<name>.tmp-*`。不支持多个进程同时写同一个快照。
 - **compare 只读**（`readable`）：不调用 `recover`，不删除、不改名任何东西，免得删掉另一个进程正在写的临时目录，或在只读挂载上失败。`snap` 不存在而 `snap.old` 含 `manifest.json` 时（中断在两次 rename 之间）返回 `snap.old` 来读，记 WARNING。
 - **record 一条都没写入时不写快照**，`--clean` 也一样（`service._record` 记 WARNING）：否则基线不可用、token 过期时 `--clean` 会把好的快照换成空的。
@@ -365,7 +377,7 @@ flowchart TD
 - 模型在 `core/result.py`（引用 `models.Finding`、`WarningItem`、`Suggestion`），JSON Schema 由 `scripts/export_result_schema.py` 从 `RunResult.model_json_schema(mode="serialization")` 导出到 `schema/result.schema.json`，`tests/test_result_schema.py` 检查它和模型一致，并用 jsonschema 校验一次真实运行的输出。**改模型后重新导出，并在 review 时看 schema 的 diff**；加字段尽量给默认值，改名或删字段要升 `schema_version`。
 - 顶层：`schema_version`（当前 1）、`tool_version`、`command`、`suite`、`started_at` / `finished_at`（带时区的 ISO 8601）、`fail_on`、`cancelled`、`exit_code`、`exit_reason`、`summary`、`requests`、`unmatched_rules`。
 - 枚举与 `models.py` / `status.py` 一致：请求状态 `RequestStatus`、finding 类型 `FindingType`、级别 `Level`、warning code `WarningCode`（`env_var_missing` 只出现在 validate 的输出里）。
-- **数字**：pydantic 把 `Decimal` 序列化成 `str(Decimal)`，小数位与原文相同（`12.50` → `"12.50"`；指数写法会变成规范形式，如 `1.50E1` → `"15.0"`，小数位仍是 1）。数字和数字字符串靠 `base_type` / `cand_type` 区分。原文以 run 目录 / 快照里的 body 为准。
+- **数字**：pydantic 把 `Decimal` 序列化成 `str(Decimal)`，小数位与原文相同（`12.50` → `"12.50"`；指数写法会变成规范形式，如 `1.50E1` → `"15.0"`，小数位仍是 1）。数字和数字字符串靠 `base_type` / `cand_type` 区分。数字原文以 run 目录 / 快照里的 body 文件为准（格式化不改变小数位，见「落盘格式」）。
 - **缺失**：`{"absent": true}`（`models.ABSENT`），和 `null` 区分。schema 数组的 finding 两侧是类型集合或小数位集合，附 `example_index`。
 - **`finding_id`**：`models.finding_id` = sha256(请求名 \0 类型 \0 具体路径) 的前 16 个十六进制字符。keyed 数组的具体路径用 key 值（`[sku=A]`，数字按数值规范化），schema 数组的具体路径就是泛化路径，非 body 的 finding 用伪路径，所以跨运行稳定、keyed 不同元素互不相同。
 - **`rule_refs`**：`{scope, index}`，`scope` 为 `defaults`、`rules_file` 或 `request`；`rules_file` 时另有 `file`、`line`。`unmatched_rules` 同理。warning 来自规则文件时有 `file`。

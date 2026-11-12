@@ -138,12 +138,20 @@ exit 1: 存在 1 条达到 breaking 级别的 finding
 |---|---|
 | `result.json` | 结构化结果，字段见下文 |
 | `report.html`、`report.md`、`junit.xml` | 报告，按 `--format` 输出，见 [report.md](report.md) |
-| `baseline/<name>.json` | 基线的 2 个 sample（`compare` 时是快照里的 1–2 个；快照里没有这条请求时不写） |
-| `candidate/<name>.json` | 候选的 1 个 sample，`snapshot accept` 从这里读 |
+| `baseline/<name>.json` | 基线的 2 个 sample 的请求文件（`compare` 时是快照里的 1–2 个；快照里没有这条请求时不写） |
+| `candidate/<name>.json` | 候选的 1 个 sample 的请求文件，`snapshot accept` 从这里读 |
+| `samples/baseline/<name>/`、`samples/candidate/<name>/` | 每个 sample 的 body 文件：`1.json`、`2.json`…… |
 
-每个 sample 记录 URL、状态码、`Content-Type` 和 `compare_headers` 列出的响应头、body 原文（不是 UTF-8 时存 base64，字段名 `body_b64`）、耗时、重试次数；网络错误的 sample 只有 URL、错误原因和重试次数。**请求头一律不保存**，所以 token 不会落盘；其他响应头（如 `Set-Cookie`）也不保存。但响应体原样保存，不要把 run 目录提交或上传到公开的地方。
+每个 sample 的 body 单独存成一个文件，文件名是 sample 的序号加扩展名（`1.json`、`2.json`）：
 
-`--out` 指向已存在的非空目录时，只有它是之前的 run 目录（里面的 `result.json` 是 api-regress 写的）才会复用（先清掉旧的 `baseline/`、`candidate/` 和报告）；否则拒绝写入，退出码 3，以免把文件混进无关的目录或删掉别人的文件。`--log-file` 放在 `--out` 目录里不影响判断。
+- **JSON 响应**（Content-Type 是 `application/json` 或 `*+json`）缩进 2 格格式化后保存，可以直接打开查看。数字按原文的小数位输出（`12.50` 仍是 `12.50`），对比结果和用原始响应完全一样。会变的只有写法：指数写法规范化（`1.50E1` → `15.0`、`0.0000001` → `1E-7`，小数位不变），`\u4e2d` 这类转义写成字符本身，BOM 去掉。
+- 以下情况**存原始字节**，不格式化：有重复的 key（格式化会只剩最后一个）、charset 不是 UTF-8、声明是 JSON 但解析失败。这时请求文件里 `body_formatted` 为 `false`。
+- 其他响应：能按 UTF-8 解码的存成 `.txt`，否则存成 `.bin`，都是原始字节。
+- body 为空（HEAD、204）和网络错误的 sample 没有 body 文件。
+
+请求文件里每个 sample 记录 URL、状态码、`Content-Type` 和 `compare_headers` 列出的响应头、`body_file`（body 文件名）、`body_formatted`（是否格式化过）、`body_size`（body 文件的字节数）、`body_sha256`（body 文件的 SHA-256）、耗时、重试次数；body 为空时只有 `body_size: 0`；网络错误的 sample 只有 URL、错误原因和重试次数。 **请求头一律不保存**，所以 token 不会落盘；其他响应头（如 `Set-Cookie`）也不保存。但响应体原样保存，不要把 run 目录提交或上传到公开的地方。
+
+`--out` 指向已存在的非空目录时，只有它是之前的 run 目录（里面的 `result.json` 是 api-regress 写的）才会复用（先清掉旧的 `baseline/`、`candidate/`、`samples/` 和报告）；否则拒绝写入，退出码 3，以免把文件混进无关的目录或删掉别人的文件。`--log-file` 放在 `--out` 目录里不影响判断。
 
 `--out` 在发请求之前就检查，不能用时一个请求都不发。写入阶段才失败时（例如磁盘满），退出码为 3，stdout 的 result 行显示 `result: 未写入`。某个报告写不出来时，其他报告和 `result.json` 照常写，退出码为 3，原因里写明是哪个报告出错。
 

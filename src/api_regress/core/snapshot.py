@@ -2,8 +2,9 @@
 
 ```
 snapshot/
-  manifest.json        # schema_version、tool_version、fingerprint_version、updated_at、每条请求的指纹/时间/来源
-  requests/<name>.json # 和 run 目录的 baseline/<name>.json 格式相同（samples.side_document）
+  manifest.json            # schema_version、tool_version、fingerprint_version、updated_at、每条请求的指纹/时间/来源
+  requests/<name>.json     # 和 run 目录的 baseline/<name>.json 格式相同（samples.write_side_file）
+  samples/<name>/<n>.json  # 第 n 个 sample 的 body（.json / .txt / .bin）
 ```
 
 写入是原子的：在同级目录写好完整的新快照，再 `snap → snap.old`、新目录 → `snap`，最后删掉 `snap.old`。
@@ -29,11 +30,12 @@ from api_regress import __version__
 from api_regress.core.config import NAME_PATTERN
 from api_regress.core.samples import (
     FINGERPRINT_VERSION,
+    LegacyFormatError,
     Sample,
     SampleFormatError,
     dump_json,
     parse_side_document,
-    side_document,
+    write_side_file,
 )
 from api_regress.core.status import SnapshotProblem
 
@@ -42,6 +44,7 @@ log = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 MANIFEST = "manifest.json"
 REQUESTS_DIR = "requests"
+BODIES_DIR = "samples"
 
 Source = Literal["record", "accept"]
 
@@ -183,10 +186,16 @@ def _read_manifest(root: Path) -> Manifest:
     return manifest
 
 
+def _body_dir(root: Path, name: str) -> Path:
+    return root / BODIES_DIR / name
+
+
 def _read_entry(root: Path, name: str) -> tuple[str, list[Sample]]:
     path = root / REQUESTS_DIR / f"{name}.json"
     try:
-        side = parse_side_document(_read_json(path))
+        side = parse_side_document(_read_json(path), _body_dir(root, name))
+    except LegacyFormatError as exc:
+        raise SnapshotError(f"快照损坏：{path} {exc}，用 snapshot record --clean 重录") from None
     except SampleFormatError as exc:
         raise SnapshotError(f"快照损坏：{path}：{exc}") from None
     if side.name != name or not side.samples:
@@ -253,10 +262,21 @@ def _fill(tmp: Path, root: Path, base: Manifest | None, entries: list[NewEntry],
     replaced = {e.name for e in entries}
     for name in (base.requests if base is not None else {}):
         if name not in replaced:
-            shutil.copy2(root / REQUESTS_DIR / f"{name}.json", requests / f"{name}.json")
+            _copy_entry(root, tmp, name)
     for entry in entries:
-        dump_json(requests / f"{entry.name}.json", side_document(entry.name, entry.fingerprint, entry.samples, entry.compare_headers))
+        write_side_file(
+            requests / f"{entry.name}.json", _body_dir(tmp, entry.name), entry.name, entry.fingerprint, entry.samples,
+            entry.compare_headers,
+        )  # fmt: skip
     dump_json(tmp / MANIFEST, json.loads(manifest.model_dump_json()))
+
+
+def _copy_entry(root: Path, tmp: Path, name: str) -> None:
+    """没变的请求按字节原样复制：请求文件和 body 目录都不解析（body 目录不存在时只复制请求文件，compare 时再报损坏）。"""
+    shutil.copy2(root / REQUESTS_DIR / f"{name}.json", tmp / REQUESTS_DIR / f"{name}.json")
+    bodies = _body_dir(root, name)
+    if bodies.is_dir():
+        shutil.copytree(bodies, _body_dir(tmp, name))
 
 
 def _swap(tmp: Path, root: Path) -> None:

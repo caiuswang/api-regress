@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shlex
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any
 
 import yaml
 
 from api_regress.core.config import Assert, Rule
+from api_regress.core.jsonfmt import compact_json, pretty_json
 from api_regress.core.jsonload import load_body
 from api_regress.core.models import Absent, Finding, Level, RuleRef, Side, WarningItem
 from api_regress.core.reportdata import ReportInput, RequestExtras
@@ -45,15 +44,6 @@ def _value_text(value: Any, kind: str | None, finding_type: str) -> str:
     if kind == "number" and isinstance(value, str):  # 从 result.json 读回的数字是字符串
         return value
     return compact_json(value)
-
-
-def compact_json(value: Any) -> str:
-    """单行 JSON，数字按原文的小数位输出（对象、数组里嵌套的 `Decimal` 也一样，不会变成带引号的字符串）。"""
-    if isinstance(value, dict):
-        return "{" + ", ".join(f"{json.dumps(str(k), ensure_ascii=False)}: {compact_json(v)}" for k, v in value.items()) + "}"
-    if isinstance(value, list):
-        return "[" + ", ".join(compact_json(v) for v in value) + "]"
-    return _scalar(value)
 
 
 def clip(text: str, limit: int) -> str:
@@ -189,16 +179,6 @@ def elapsed_text(ms: float | None) -> str:
 # ---------- body 的展示文本 ----------
 
 
-def _scalar(value: Any) -> str:
-    if isinstance(value, dict):
-        return "{}"
-    if isinstance(value, list):
-        return "[]"
-    if isinstance(value, Decimal) or (isinstance(value, int) and not isinstance(value, bool)):
-        return str(value)
-    return json.dumps(value, ensure_ascii=False, default=str)
-
-
 def body_text(sample: Sample) -> str:
     """JSON 按原文的小数位缩进排版；其他文本原样；不是 UTF-8 时只给字节数。"""
     if sample.failed:
@@ -210,35 +190,6 @@ def body_text(sample: Sample) -> str:
         return sample.body.decode("utf-8-sig")
     except UnicodeDecodeError:
         return f"(不是 UTF-8 文本，{len(sample.body)} 字节)"
-
-
-def pretty_json(value: Any) -> str:
-    return "\n".join(_lines(value, ""))
-
-
-def _lines(value: Any, indent: str) -> list[str]:
-    inner = indent + "  "
-    if isinstance(value, dict) and value:
-        body = [_entry(f"{inner}{json.dumps(k, ensure_ascii=False)}: ", v, inner) for k, v in value.items()]
-        return ["{", *_join(body), f"{indent}}}"]
-    if isinstance(value, list) and value:
-        body = [_entry(inner, v, inner) for v in value]
-        return ["[", *_join(body), f"{indent}]"]
-    return [_scalar(value)]
-
-
-def _entry(prefix: str, value: Any, indent: str) -> list[str]:
-    lines = _lines(value, indent)
-    return [prefix + lines[0], *lines[1:]]
-
-
-def _join(entries: list[list[str]]) -> list[str]:
-    out: list[str] = []
-    for i, lines in enumerate(entries):
-        if i < len(entries) - 1:
-            lines = [*lines[:-1], lines[-1] + ","]
-        out += lines
-    return out
 
 
 # ---------- 汇总 ----------

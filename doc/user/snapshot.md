@@ -111,7 +111,9 @@ exit 4: 1 条请求没有写入快照
 
 同时满足多个时按 **2 > 3 > 1 > 4 > 0** 取值。快照目录不能用、损坏、版本不兼容都在**发请求之前**检查，一个请求都不会发。
 
-"快照损坏"指 `manifest.json` 读不出来或格式不对、manifest 列出的请求文件不存在；`compare` 还会检查要用到的请求文件能不能解析。`record` / `accept` 不解析没变的请求文件，按字节原样复制：某个请求文件坏了时，`snapshot record --only NAME` 重录它就能修好。
+"快照损坏"指 `manifest.json` 读不出来或格式不对、manifest 列出的请求文件不存在；`compare` 还会检查要用到的请求文件能不能解析，以及它引用的 body 文件是否存在、大小和 SHA-256 是否对得上（手动改过 body 文件也算损坏）。`record` / `accept` 不解析没变的请求，请求文件和 body 目录都按字节原样复制：某个请求坏了时，`snapshot record --only NAME` 重录它就能修好。
+
+旧版本工具写的快照（body 内嵌在请求文件里，字段 `body` / `body_b64`）按损坏处理，提示用 `snapshot record --clean` 重录；`accept` 读到旧版本的 run 目录同样按损坏处理（退出码 3），重新运行 `run` 或 `snapshot compare` 即可。
 
 ## 快照目录
 
@@ -119,15 +121,25 @@ exit 4: 1 条请求没有写入快照
 snap/
   manifest.json
   requests/
-    order-detail.json
+    order-detail.json      # 请求文件：元数据，引用 body 文件
     order-list.json
+  samples/
+    order-detail/
+      1.json               # 第 1 个 sample 的 body
+      2.json
+    order-list/
+      1.json
+      2.json
 ```
 
+要看某次的具体返回，直接打开 `samples/<name>/1.json`。
+
 - **`manifest.json`**：`schema_version`（当前 1）、`tool_version`、`fingerprint_version`、`updated_at`，以及 `requests`：每条请求的 `fingerprint`、`recorded_at`、`source`（`record` / `accept`）、`samples`（sample 数）。
-- **`requests/<name>.json`**：`name`、`fingerprint`、`fingerprint_version` 和 `samples`，格式和 run 目录的 `baseline/<name>.json` 相同：URL、状态码、`Content-Type` 和 `compare_headers` 列出的响应头、body 原文（不是 UTF-8 时存 base64，字段名 `body_b64`）、耗时、重试次数。
-- **不保存请求头**，token 不会落盘；其他响应头（如 `Set-Cookie`）也不保存。但**响应体原样保存**，不要把快照提交或上传到公开的地方。
+- **`requests/<name>.json`**：`name`、`fingerprint`、`fingerprint_version` 和 `samples`，格式和 run 目录的 `baseline/<name>.json` 相同，字段见 [run.md](run.md) 的「run 目录」。
+- **`samples/<name>/`**：每个 sample 的 body 文件。JSON 响应缩进格式化后保存（数字的小数位不变，对比结果和原始响应相同），有重复 key、charset 不是 UTF-8、解析失败的 JSON 和其他响应存原始字节，规则见 [run.md](run.md) 的「run 目录」。
+- **不保存请求头**，token 不会落盘；其他响应头（如 `Set-Cookie`）也不保存。但**响应体会完整保存**在 `samples/` 里，单独成文件后更容易被误提交：不要把快照提交或上传到公开的地方，可以把快照目录加进 `.gitignore`。
 - **版本**：`schema_version` 不是当前工具支持的版本时退出码 2，用 `snapshot record --clean` 重录；`fingerprint_version` 变了（工具升级改了指纹算法）时，所有请求都按指纹不一致处理。
-- **请求 name 只差大小写**：在 macOS、Windows 默认的文件系统上，`Order-List.json` 和 `order-list.json` 是同一个文件，会互相覆盖。不要这样起名。
+- **请求 name 只差大小写**：在 macOS、Windows 默认的文件系统上，`Order-List.json` 和 `order-list.json` 是同一个文件（`samples/` 下的目录也一样），会互相覆盖。不要这样起名。
 
 ### 目录的保护与原子写入
 

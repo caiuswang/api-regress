@@ -16,13 +16,14 @@ from api_regress.core.config import NAME_PATTERN
 from api_regress.core.result import RunResult
 from pydantic import ValidationError
 
-from api_regress.core.samples import Sample, SampleFormatError, SideFile, dump_json, parse_side_document, side_document
+from api_regress.core.samples import Sample, SampleFormatError, SideFile, parse_side_document, write_side_file
 
 log = logging.getLogger(__name__)
 
 DEFAULT_ROOT = Path("api-regress-out")
 RESULT_FILE = "result.json"
 SIDE_DIRS = ("baseline", "candidate")
+BODIES_DIR = "samples"
 REPORT_FILES = {"html": "report.html", "md": "report.md", "junit": "junit.xml"}
 """各种报告的文件名。复用 run 目录时先删掉旧的，免得留下和本次结果对不上的报告。"""
 
@@ -55,15 +56,16 @@ def _written_by_us(path: Path) -> bool:
     )
 
 
-_LEFTOVER_ENTRIES = frozenset({*SIDE_DIRS, *REPORT_FILES.values()})
+_LEFTOVER_ENTRIES = frozenset({*SIDE_DIRS, BODIES_DIR, *REPORT_FILES.values()})
 
 
 def _is_leftover(entries: list[Path]) -> bool:
-    """上次写到一半中断（result.json 最后写，所以还没有）：只有两侧目录和报告，两侧目录里只有 .json 文件。"""
+    """上次写到一半中断（result.json 最后写，所以还没有）：只有两侧目录、body 目录和报告；
+    两侧目录里只有 .json 文件，body 目录里不限。"""
     for entry in entries:
         if entry.name not in _LEFTOVER_ENTRIES:
             return False
-        if entry.is_dir() and any(not (f.is_file() and f.suffix == ".json") for f in entry.iterdir()):
+        if entry.name in SIDE_DIRS and entry.is_dir() and any(not (f.is_file() and f.suffix == ".json") for f in entry.iterdir()):
             return False
     return True
 
@@ -94,7 +96,7 @@ def prepare(out: Path, ignore: Collection[Path] = ()) -> None:
     if old_result.is_file():
         log.info("清掉上次的 %s", old_result)
         old_result.unlink()
-    for side in SIDE_DIRS:
+    for side in (*SIDE_DIRS, BODIES_DIR):
         old = out / side
         if old.is_dir():
             log.info("清掉上次的 %s", old)
@@ -114,8 +116,12 @@ def write_side(
     directory = out / side
     directory.mkdir(exist_ok=True)
     path = directory / f"{name}.json"
-    dump_json(path, side_document(name, fingerprint, samples, compare_headers))
+    write_side_file(path, body_dir(out, side, name), name, fingerprint, samples, compare_headers)
     return path
+
+
+def body_dir(run_dir: Path, side: str, name: str) -> Path:
+    return run_dir / BODIES_DIR / side / name
 
 
 def write_result(out: Path, result: RunResult) -> Path:
@@ -141,7 +147,7 @@ def read_result(run_dir: Path) -> RunResult:
 
 
 def read_side(run_dir: Path, side: str, name: str) -> SideFile | None:
-    """`<side>/<name>.json`；文件不存在时返回 None，格式不对抛 SampleFormatError。"""
+    """`<side>/<name>.json` 和它的 body 文件；请求文件不存在时返回 None，格式不对、body 文件缺失或对不上抛 SampleFormatError。"""
     path = run_dir / side / f"{name}.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -149,4 +155,4 @@ def read_side(run_dir: Path, side: str, name: str) -> SideFile | None:
         return None
     except (OSError, ValueError) as exc:
         raise SampleFormatError(f"{path} 读不出来或不是合法的 JSON（{type(exc).__name__}）") from None
-    return parse_side_document(data)
+    return parse_side_document(data, body_dir(run_dir, side, name))
