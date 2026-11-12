@@ -67,7 +67,8 @@ flowchart LR
 |---|---|---|
 | `core/models.py` | 跨模块共用的枚举和模型：`Level`、`Side`、`WarningCode`、`WarningItem`；finding 相关：`FindingType`、`Finding`、`ValueType`、`RuleRef`、`PathToken`、`Absent`（单例 `ABSENT`）；`Suggestion` | `format_loc`、`to_path_tokens`、`finding_id` |
 | `core/paths.py` | 路径语法：解析、格式化、匹配、泛化、具体程度 | `parse`、`format_path`、`match`、`covers`、`overlaps`、`generalize`、`specificity` |
-| `core/config.py` | suite 的 pydantic 模型；YAML 加载与规模限制；`${VAR}` 替换；报错行号 | `load_suite`、`load_suite_text`、`substitute_env`、`Suite.success_of`、`base_url_problem`、`format_where`、`NAME_PATTERN` |
+| `core/config.py` | suite 的 pydantic 模型；YAML 加载与规模限制；`${VAR}` 替换；报错行号；加载请求的规则文件并校验展开出的规则 | `load_suite`、`load_suite_text`、`parse_rules_file`、`FileRule`、`Request.file_rules`、`substitute_env`、`Suite.success_of`、`base_url_problem`、`format_where`、`NAME_PATTERN` |
+| `core/rulesfile.py` | 规则文件的展开：把和响应同形的树展开成「路径 + 属性」的原始规则，检查 key、值、路径和重复路径；不依赖 config，属性值交给 config 用 `Rule` 校验 | `expand`、`RawRule`、`Problem` |
 | `core/expr.py` | success / asserts 表达式：AST 白名单编译、simpleeval 求值、计算量预算；重新导出 `expr_values` 的视图类 | `compile_expr`、`eval_success`、`eval_assert`、`Outcome` |
 | `core/expr_values.py` | 表达式里的值怎么运算：只读视图、JSON 语义的相等与包含、内置函数、运算符；类型不匹配一律抛 `ExprEvalError` | `JsonView`、`HeadersView`、`SideView`、`json_equal`、`contains`、`FUNCTIONS`、`OPERATORS`、`type_name` |
 | `core/rules.py` | 规则按属性合并、ignore 剪枝、静态无效规则检测、本次未命中的规则 | `RuleSet.resolve`、`RuleSet.is_pruned`、`static_warnings`、`unmatched_rules` |
@@ -94,7 +95,7 @@ flowchart LR
 | `demo/data.py` | 演示数据：v1 固定数据，v2 的每处改动写在 `_v2_*` 函数里 | `DATASETS` |
 | `demo/__init__.py`、`demo/suites/` | 自带的 `pass.yaml`、`regress.yaml`（作为包数据随 wheel 发布）及写出方法 | `suite_text`、`write_suites`、`SUITE_NAMES` |
 | `report/__init__.py` | 格式名到 `Reporter` 的表 `FORMATS`；`--format none` 的名字 `NONE` | `reporters`、`FORMATS`、`NONE` |
-| `report/common.py` | 几种报告共用的展示逻辑：finding 的值怎么显示、curl 复现命令、状态码、规则引用、body 的展示文本（按原文小数位排版 JSON） | `finding_values`、`rules_text`、`finding_note`、`rule_attrs_text`、`curl_command`、`side_views`、`body_text`、`pretty_json`、`compact_json`、`status_codes`、`failing` |
+| `report/common.py` | 几种报告共用的展示逻辑：finding 的值怎么显示、curl 复现命令、状态码、规则引用、body 的展示文本（按原文小数位排版 JSON） | `finding_values`、`rules_text`、`rule_where`、`finding_note`、`rule_attrs_text`、`curl_command`、`side_views`、`body_text`、`pretty_json`、`compact_json`、`status_codes`、`failing` |
 | `report/html.py`、`report/templates/report.html.j2` | `report.html`：Jinja2（autoescape），body 对照的截断 | `render`、`body_diff` |
 | `report/sidediff.py` | 两侧文本的并排对照表格（HTML，已转义）：行级对齐 + 有上限的行内高亮 | `table`、`row_groups` |
 | `report/md.py` | `report.md` | `render`、`cell` |
@@ -114,7 +115,8 @@ flowchart TD
   X -->|无错| U["UnverifiedSuite → 通过，列出字段，跳过规则检查"]
   X -->|有错| ERR["ConfigError → 退出码 2"]
   C3 --> C4["_post_checks：重复 name、base_url；_expr_issues：表达式白名单"]
-  C4 --> D["缺失变量 → env_var_missing"]
+  C4 --> C5["_attach_rules_files：读规则文件 → rulesfile.expand → Rule 校验，挂到 Request.file_rules"]
+  C5 --> D["缺失变量 → env_var_missing"]
   D --> E["rules.static_warnings"]
   E --> F["ValidationReport → stdout 摘要，退出码 0 / 2"]
   U --> F
@@ -130,6 +132,9 @@ flowchart TD
 - **缺失变量导致的类型错误**：`validate` 时缺失变量保留原文（如 `"${T}"`），非字符串字段会校验失败。pydantic 会一次报出所有字段的错误：只要有一条落在缺失变量以外的位置，就照常报错；全部落在缺失变量的位置时，抛 `UnverifiedSuite`，`service` 把它当作「通过但未完全校验」处理，并跳过规则检查。不再尝试删字段重试，因为那样会制造假报错（必填字段被删）或假通过。
 - **原始模板**：`LoadedSuite.raw` 保存替换前的数据，`samples.fingerprint` 用它计算请求指纹：指纹用 `${VAR}` 替换前的模板，换 token 或换环境不会让指纹变化。
 - **base_url 检查**放在 `_post_checks`：本命令需要的 target 一定检查；不需要的一侧只要值不依赖缺失变量也检查，所以 `validate` 能发现写死的错误地址。协议不区分大小写，并且要求有主机名。
+- **规则文件**（`_attach_rules_files`）：在 pydantic 校验和 `_post_checks` 都通过后执行。路径按 `load_suite_text` 的 `base_dir`（默认是 suite 文件所在目录）拼接，同一个文件只读一次；值来自缺失变量的 `rules_file` 跳过。文件用同一套 `_parse_yaml` 加载（规模限制、重复 key、行号表都相同，允许空文件），`rulesfile.expand` 展开，再逐条 `Rule.model_validate`，所以属性的校验和 suite 里的规则完全一致。错误的 `source` 是规则文件路径，`location` 是节点路径，行号用规则文件自己的行号表。展开的结果存在 `Request` 的私有属性里（`Request.file_rules`），不改 `Request` 的字段。
+  - 展开时路径用 token 元组拼接（`parent + paths.parse(key)`），不拼字符串，避免引号 key 被重复转义；以 `**` 结尾的 key（如 `"**"`）借一个占位段解析。有属性的节点用 `paths.format_path` 生成路径，并检查能被 `paths.parse` 解析回同样的 token。重复路径按 token 元组判断。规则按先父后子、从上到下的顺序排列。
+  - 被 YAML 解析成布尔值的 key（`on:`）还原不出原文，行号退到父节点。
 - **`success` 覆盖**：`Suite.success_of` 用 `model_fields_set` 区分「没写」和「写了 null」（请求级 `success: null` 表示不判定，不再沿用 defaults）。
 
 ## 表达式引擎（`core/expr.py`、`core/expr_values.py`）
@@ -173,8 +178,8 @@ flowchart TD
 
 ## 规则合并
 
-- `CompiledRule.rank` = `(通配等级, 层级, 作用域, 书写顺序)`，对应 [suite.md](../user/suite.md)「规则怎么合并」的三级比较。通配等级来自 `paths.specificity`：无通配 2、含 `[*]` 1、含 `**` 0；层级是非 `**` token 的个数。
-- `RuleSet.resolve` 对每个属性分别在「匹配到且写了该属性」的规则里取 `max(rank)`；`Resolved.sources` 记录每个属性来自哪条规则（`RuleRef{scope, index}`）。结果按路径缓存在 `RuleSet` 实例里，`RuleSet` 按请求创建，规则不变。
+- `CompiledRule.rank` = `(通配等级, 层级, 来源, 书写顺序)`，对应 [suite.md](../user/suite.md)「规则怎么合并」的三级比较。来源的顺序是 `_SCOPE_RANK`：defaults 0 < rules_file 1 < request 2。`compile_rules` 按 defaults、规则文件、请求 `rules` 的顺序产出规则；规则文件里的规则 `RuleRef` 带 `file`、`line`。通配等级来自 `paths.specificity`：无通配 2、含 `[*]` 1、含 `**` 0；层级是非 `**` token 的个数。
+- `RuleSet.resolve` 对每个属性分别在「匹配到且写了该属性」的规则里取 `max(rank)`；`Resolved.sources` 记录每个属性来自哪条规则（`RuleRef{scope, index, file, line}`）。结果按路径缓存在 `RuleSet` 实例里，`RuleSet` 按请求创建，规则不变。
 - ignore 剪枝：对比引擎自顶向下遍历，节点 `ignore` 为真就不再进入子树；`RuleSet.is_pruned` 供需要判断任意路径的场景使用（如不稳定字段建议），根节点 `$` 也算在内。
 - **缓存键**（`RuleSet._cache_key`）：keyed 元素只能被 `[*]` 和 `**` 匹配，和 `[*]` 等价；没有任何规则写到的下标同理。这两种 token 在缓存键里换成 `[*]`，大数组的每个元素共用一条缓存，不必把所有规则重新匹配一遍。
 - `CompiledRule` 按对象身份比较和 hash，可以放进 set。
@@ -187,7 +192,7 @@ flowchart TD
 | `index_rule_ineffective` | 规则里有字面下标，但没有任何 `mode: positional` 的 array 规则可能作用到那个数组 |
 | `rule_ineffective_in_schema` | `_check_value_in_schema`：规则配了 `on_value_change`，路径里有 `[*]`，但没有 keyed / positional 的 array 规则可能作用到那个数组（schema 和 unordered 都不逐个配对）。`_check_nested_array`：规则配了非 schema 的 `array`，路径里有 `[*]`，但外层数组只可能是 schema（外层元素不配对，内层也无法配对）。两者共用 `_unpaired_array` |
 
-全局规则在「全局 + 所有请求的规则」中检查，只报一次：只要某个请求里的 `ignore: false` 或 `array` 规则可能让它生效就不报；但请求级的 `ignore: true` 不算数（`_ignorers`），因为它只影响个别请求。请求级规则在「全局 + 本请求」中检查。判定都偏保守：宁可漏报，不误报。运行时才能确定的情况（例如 `compare: values` 落在 schema 数组里）由对比引擎报。
+全局规则在「全局 + 所有请求的规则」中检查，只报一次：只要某个请求里的 `ignore: false` 或 `array` 规则可能让它生效就不报；但请求级的 `ignore: true` 不算数（`_ignorers`），因为它只影响个别请求。请求级规则（含规则文件里的）在「全局 + 本请求」中检查。规则文件里的规则，warning 的 `file`、`line`、`location` 写规则文件、行号和节点路径（`rules._where`）。判定都偏保守：宁可漏报，不误报。运行时才能确定的情况（例如 `compare: values` 落在 schema 数组里）由对比引擎报。
 
 ## JSON 解析（`core/jsonload.py`）
 
@@ -363,7 +368,8 @@ flowchart TD
 - **数字**：pydantic 把 `Decimal` 序列化成 `str(Decimal)`，小数位与原文相同（`12.50` → `"12.50"`；指数写法会变成规范形式，如 `1.50E1` → `"15.0"`，小数位仍是 1）。数字和数字字符串靠 `base_type` / `cand_type` 区分。原文以 run 目录 / 快照里的 body 为准。
 - **缺失**：`{"absent": true}`（`models.ABSENT`），和 `null` 区分。schema 数组的 finding 两侧是类型集合或小数位集合，附 `example_index`。
 - **`finding_id`**：`models.finding_id` = sha256(请求名 \0 类型 \0 具体路径) 的前 16 个十六进制字符。keyed 数组的具体路径用 key 值（`[sku=A]`，数字按数值规范化），schema 数组的具体路径就是泛化路径，非 body 的 finding 用伪路径，所以跨运行稳定、keyed 不同元素互不相同。
-- **`rule_refs`**：`{scope, index}`，`scope` 为 `defaults` 或 `request`。
+- **`rule_refs`**：`{scope, index}`，`scope` 为 `defaults`、`rules_file` 或 `request`；`rules_file` 时另有 `file`、`line`。`unmatched_rules` 同理。warning 来自规则文件时有 `file`。
+- **只在有值时输出的字段**：`file`、`line`（`RuleRef`、`UnmatchedRule`）和 warning 的 `file` 用 `models.omitted_if_none()`（pydantic 的 `exclude_if`），值为 None 时不写进 `result.json`，不使用规则文件的 suite 输出和以前逐字节相同。
 - **`snapshot_problem` / `candidate_success`**（`RequestResult`）：给 accept 用的事实。前者是 compare 时的 `SnapshotProblem`（`missing` / `fingerprint_mismatch`），后者是候选的 success 结果（`_Flow.candidate_success`，只求值一次；没有求值为 `null`）。`baseline` 在快照里没有这条请求时为空列表。
 - 不含任何请求头；sample 只给 URL、状态码、耗时、重试次数、Content-Type 和错误原因。
 

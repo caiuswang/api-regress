@@ -81,8 +81,15 @@ def rule_attrs_text(rule: Rule) -> str:
     return flow.strip()[1:-1]
 
 
+def rule_where(scope: str, index: int, file: str | None, line: int | None) -> str:
+    """规则写在哪里：`defaults.rules[0]`、`rules[1]`，规则文件里的写 `rules_file <文件>:<行号>`。"""
+    if scope == "rules_file":
+        return f"rules_file {file}:{line}" if line else f"rules_file {file}"
+    return f"defaults.rules[{index}]" if scope == "defaults" else f"rules[{index}]"
+
+
 def rule_ref_text(ref: RuleRef, extras: RequestExtras | None) -> str:
-    where = f"defaults.rules[{ref.index}]" if ref.scope == "defaults" else f"rules[{ref.index}]"
+    where = rule_where(ref.scope, ref.index, ref.file, ref.line)
     rule = extras.rules.get(ref) if extras else None
     return f"{where} {rule.path}（{rule_attrs_text(rule)}）" if rule else where
 
@@ -253,8 +260,8 @@ def all_warnings(result: RunResult) -> list[WarningItem]:
 def unmatched_text(data: ReportInput) -> list[str]:
     out = []
     for rule in data.result.unmatched_rules:
-        where = f"defaults.rules[{rule.index}]" if rule.scope == "defaults" else f"{rule.request}: rules[{rule.index}]"
-        out.append(f"{where} {rule.path}")
+        where = rule_where(rule.scope, rule.index, rule.file, rule.line)
+        out.append(f"{where} {rule.path}" if rule.scope == "defaults" else f"{rule.request}: {where} {rule.path}")
     return out
 
 

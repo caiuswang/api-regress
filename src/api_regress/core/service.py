@@ -277,9 +277,12 @@ def _unmatched(suite: Suite, executed: list[Executed]) -> list[UnmatchedRule]:
         missed_defaults = {r.ref.index for r in item.missed if r.ref.scope == "defaults"}
         defaults_missed = missed_defaults if defaults_missed is None else defaults_missed & missed_defaults
         out += [
-            UnmatchedRule(scope="request", index=r.ref.index, request=item.plan.name, path=r.rule.path)
+            UnmatchedRule(
+                scope=r.ref.scope, index=r.ref.index, request=item.plan.name, path=r.rule.path, file=r.ref.file,
+                line=r.ref.line,
+            )
             for r in item.missed
-            if r.ref.scope == "request"
+            if r.ref.scope != "defaults"
         ]
     head = [
         UnmatchedRule(scope="defaults", index=i, path=suite.defaults.rules[i].path) for i in sorted(defaults_missed or ())

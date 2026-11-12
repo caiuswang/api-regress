@@ -301,15 +301,40 @@
       "type": "object"
     },
     "RuleRef": {
-      "description": "规则的位置：defaults.rules[index] 或本请求的 rules[index]。",
+      "description": "规则的位置：defaults.rules[index]、本请求 rules_file 展开后的第 index 条（附文件和行号），或本请求的 rules[index]。",
       "properties": {
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File"
+        },
         "index": {
           "title": "Index",
           "type": "integer"
         },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
         "scope": {
           "enum": [
             "defaults",
+            "rules_file",
             "request"
           ],
           "title": "Scope",
@@ -468,9 +493,33 @@
     "UnmatchedRule": {
       "description": "本次未命中的规则：在本次运行的请求的原始 body 里一个路径都没匹配到。request 为 None 表示 defaults 里的规则。",
       "properties": {
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File"
+        },
         "index": {
           "title": "Index",
           "type": "integer"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
         },
         "path": {
           "title": "Path",
@@ -491,6 +540,7 @@
         "scope": {
           "enum": [
             "defaults",
+            "rules_file",
             "request"
           ],
           "title": "Scope",
@@ -526,6 +576,18 @@
           ],
           "title": "Code",
           "type": "string"
+        },
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File"
         },
         "line": {
           "anyOf": [

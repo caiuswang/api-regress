@@ -10,7 +10,8 @@ from api_regress.core import paths
 from api_regress.core.config import RULE_ATTRS, ArrayRule, DecimalRule, Request, Rule, Suite
 from api_regress.core.models import Level, Loc, RuleRef, WarningItem, format_loc
 
-_SCOPE_RANK = {"defaults": 0, "request": 1}
+# 具体程度相同时：请求的 rules > rules_file > defaults
+_SCOPE_RANK = {"defaults": 0, "rules_file": 1, "request": 2}
 
 
 @dataclass(frozen=True, eq=False)
@@ -27,7 +28,7 @@ class CompiledRule:
 
     @property
     def rank(self) -> tuple[int, int, int, int]:
-        """越大越优先：通配等级 → 层级 → 请求级优先于全局 → 后写优先。"""
+        """越大越优先：通配等级 → 层级 → 来源（请求的 rules > rules_file > defaults）→ 后写优先。"""
         level, depth = paths.specificity(self.tokens)
         return level, depth, _SCOPE_RANK[self.ref.scope], self.ref.index
 
@@ -54,11 +55,16 @@ def compile_rules(suite: Suite, request: Request | None, request_index: int | No
         CompiledRule(rule, RuleRef(scope="defaults", index=i), ("defaults", "rules", i))
         for i, rule in enumerate(suite.defaults.rules)
     ]
-    if request is not None:
-        base: Loc = ("requests", request_index if request_index is not None else -1, "rules")
-        out += [
-            CompiledRule(rule, RuleRef(scope="request", index=i), (*base, i)) for i, rule in enumerate(request.rules)
-        ]
+    if request is None:
+        return out
+    req_loc: Loc = ("requests", request_index if request_index is not None else -1)
+    out += [
+        CompiledRule(fr.rule, RuleRef(scope="rules_file", index=i, file=fr.file, line=fr.line), (*req_loc, "rules_file", i))
+        for i, fr in enumerate(request.file_rules)
+    ]
+    out += [
+        CompiledRule(rule, RuleRef(scope="request", index=i), (*req_loc, "rules", i)) for i, rule in enumerate(request.rules)
+    ]
     return out
 
 
@@ -127,7 +133,7 @@ def _ignorers(rule: CompiledRule, context: Sequence[CompiledRule]) -> list[Compi
     return [
         r
         for r in context
-        if r.rule.ignore and r is not rule and (rule.ref.scope == "request" or r.ref.scope == "defaults")
+        if r.rule.ignore and r is not rule and (rule.ref.scope != "defaults" or r.ref.scope == "defaults")
     ]
 
 
@@ -229,16 +235,16 @@ def _warnings_for(
             message = check(rule, context)
             if message:
                 out.append(
-                    WarningItem(
-                        code=code,
-                        message=message,
-                        request=request,
-                        path=rule.rule.path,
-                        location=format_loc(rule.loc),
-                        line=line_of(rule.loc),
-                    )
+                    WarningItem(code=code, message=message, request=request, path=rule.rule.path, **_where(rule, line_of))
                 )
     return out
+
+
+def _where(rule: CompiledRule, line_of: LineOf) -> dict[str, Any]:
+    """warning 的位置：规则文件里的规则写文件、行号和节点路径，其余写 suite 里的位置和行号。"""
+    if rule.ref.scope == "rules_file":
+        return {"location": rule.rule.path, "line": rule.ref.line, "file": rule.ref.file}
+    return {"location": format_loc(rule.loc), "line": line_of(rule.loc)}
 
 
 def static_warnings(suite: Suite, line_of: LineOf = lambda loc: None) -> list[WarningItem]:

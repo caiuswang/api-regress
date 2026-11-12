@@ -50,6 +50,7 @@ api-regress run suite.yaml --format md,junit
 | 写法 | 含义 |
 |---|---|
 | `defaults.rules[1] **.amount（decimal: {}）`、`rules[0] data.amount（on_value_change: breaking）` | defaults 或本请求的第几条规则、它的路径和内容，说明级别或比较方式是哪条规则决定的。命中多条时用 `；` 分开 |
+| `rules_file rules/order-detail.yaml:3 data.amount（on_value_change: breaking）` | 规则来自请求的规则文件：文件、行号、展开后的路径和内容，见 [rules-file.md](rules-file.md) |
 | `asserts[0] cand.body.total > 100` | 本请求第几个 assert 和它的表达式（`assert_failed`、`assert_error`）。配了 `message` 时，message 写在类型后面的括号里 |
 | `defaults.success body.code == 0`、`success body.code == 0` | `business_error` 用的 `success` 表达式，以及它写在 defaults 还是本请求 |
 | 空 | 按默认行为报出，没有规则参与 |

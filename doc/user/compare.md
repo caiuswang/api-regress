@@ -38,7 +38,7 @@
 
 ## 规则
 
-规则写在 `defaults.rules`（所有请求）或请求自己的 `rules` 里，路径写法和多条规则怎么合并见 [suite.md](suite.md)。
+规则写在 `defaults.rules`（所有请求）、请求自己的 `rules`，或请求引用的规则文件（[rules-file.md](rules-file.md)）里，路径写法和多条规则怎么合并见 [suite.md](suite.md)。
 
 | 属性 | 作用 |
 |---|---|

@@ -129,6 +129,7 @@ api-regress snapshot accept  api-regress-out/<时间戳> -d snap/ --only order-d
 | 文档 | 内容 |
 |---|---|
 | [doc/user/suite.md](doc/user/suite.md) | suite 配置格式：完整示例、字段、路径写法、规则怎么合并 |
+| [doc/user/rules-file.md](doc/user/rules-file.md) | 规则文件：按响应结构写规则（`rules_file`）、格式、优先级、YAML 的坑 |
 | [doc/user/validate.md](doc/user/validate.md) | `validate` 命令、warning、环境变量、YAML 常见坑 |
 | [doc/user/run.md](doc/user/run.md) | `run` 命令：请求怎么发、每条请求的流程与状态、非 body 的差异、不稳定字段建议、`--format`、stdout、退出码、run 目录与 `result.json` |
 | [doc/user/snapshot.md](doc/user/snapshot.md) | `snapshot record` / `compare` / `accept`：快照怎么录、怎么对比、accept 接受和拒绝的规则、请求指纹、快照目录格式与原子写入、退出码 |

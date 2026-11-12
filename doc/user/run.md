@@ -89,7 +89,7 @@ api-regress run <suite.yaml> [--out DIR] [--fail-on LEVEL] [--format FORMATS] [-
 一条规则在本次运行的请求的原始 body 里**一个路径都没匹配到**，就列在 `result.json` 的 `unmatched_rules` 里。判定和 ignore、数组模式无关，写在 schema 数组元素里的规则只要匹配到了字段就算命中。
 
 - 只统计至少有一侧拿到了 JSON body 的请求（HEAD、出错的请求不算）。
-- defaults 里的规则在所有这些请求里都没命中才列出，只列一次；请求级规则按请求列出。
+- defaults 里的规则在所有这些请求里都没命中才列出，只列一次；请求级规则（包括规则文件里的）按请求列出。
 - 只是"本次未命中"，不代表规则已经过期：用了 `--only`、或者数据刚好没有这个字段时都会出现。
 
 ## 提示（warning）
@@ -156,8 +156,10 @@ exit 1: 存在 1 条达到 breaking 级别的 finding
   - `snapshot_problem`：只有 `compare` 会填，`missing`（快照里没有）或 `fingerprint_mismatch`（指纹不一致），其他情况为 `null`。
   - `candidate_success`：候选的 `success` 结果（`true` / `false`），没有求值时（没配 `success`、HEAD、204、非 JSON、请求没走到这一步）为 `null`。状态码不同时流程虽然就此结束，也照样求值（出错时不给 `success_eval_error`）。
   - 这两项给 `accept` 判断能不能接受候选响应。
+- `unmatched_rules[]`：`scope`、`index`、`request`（defaults 的规则为 `null`）、`path`；来自规则文件的同样有 `file`、`line`。
 - `findings[]`：`finding_id`、`type`、`level`、`path`（具体路径或伪路径）、`generalized_path`（可以直接写进规则）、`path_tokens`、`base_value` / `cand_value`、`base_type` / `cand_type`、`example_index`、`rule_refs`、`message`。
   - 字段不存在时值为 `{"absent": true}`，和 `null` 区分；小数按原文的小数位输出成字符串（`12.50` → `"12.50"`），看 `base_type` / `cand_type` 区分数字和字符串。
+  - `rule_refs[]`：`scope`（`defaults` / `rules_file` / `request`）和 `index`（第几条规则）；`scope` 为 `rules_file` 时还有 `file`（规则文件路径）和 `line`（行号），`index` 是规则文件展开后的第几条，见 [rules-file.md](rules-file.md)。
   - `finding_id` 由请求名、类型和具体路径算出：同一个差异在两次运行中的 id 相同，keyed 数组里不同元素的 id 不同。
 
 ## 日志

@@ -101,6 +101,7 @@ requests:
 | `query` | 否 | 查询参数，值必须是字符串（`page: "1"`） |
 | `headers` | 否 | 这条请求额外的请求头 |
 | `compare_headers` | 否 | 要比较的响应头名字，默认不比较任何响应头。怎么比较见 [run.md](run.md) 的「非 body 的差异」 |
+| `rules_file` | 否 | 规则文件：按响应结构写的规则，路径相对 suite 文件所在的目录，见 [rules-file.md](rules-file.md) |
 | `success` | 否 | 覆盖 defaults 里的 `success`；写成 `success: null` 表示这条请求不判定 success（例如 `/health` 这类 body 里没有业务码的接口）；不写就沿用 defaults |
 | `rules` | 否 | 只对这条请求生效的规则 |
 | `asserts` | 否 | 同时比较基线和候选的表达式，每项有 `expr`、`level`（默认 suspicious）、`message`，见 [expressions.md](expressions.md) |
@@ -141,7 +142,7 @@ requests:
 同一个节点被多条规则匹配时，**每个属性单独决定用哪条规则**，比较顺序：
 
 1. 越具体越优先：没有通配的优先于含 `[*]` 的，含 `[*]` 的优先于含 `**` 的；同类通配下，层级越深越优先。
-2. 具体程度相同，请求级优先于 defaults。
+2. 具体程度相同，按来源：请求的 `rules` > 请求的 `rules_file`（见 [rules-file.md](rules-file.md)）> defaults。
 3. 还相同，后写的优先。
 
 例子：

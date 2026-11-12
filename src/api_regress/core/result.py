@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from api_regress.core.models import Finding, Level, Suggestion, WarningItem
+from api_regress.core.models import Finding, Level, RuleScope, Suggestion, WarningItem, omitted_if_none
 from api_regress.core.samples import Sample
 from api_regress.core.status import RequestStatus, SnapshotProblem
 
@@ -76,10 +76,12 @@ class RequestResult(BaseModel):
 class UnmatchedRule(BaseModel):
     """本次未命中的规则：在本次运行的请求的原始 body 里一个路径都没匹配到。request 为 None 表示 defaults 里的规则。"""
 
-    scope: Literal["defaults", "request"]
+    scope: RuleScope
     index: int
     request: str | None = None
     path: str
+    file: str | None = omitted_if_none()
+    line: int | None = omitted_if_none()
 
 
 class Summary(BaseModel):

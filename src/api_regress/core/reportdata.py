@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 from api_regress.core.config import Assert, Request, Rule, Suite
 from api_regress.core.models import RuleRef, Side
 from api_regress.core.result import RunResult
+from api_regress.core.rules import compile_rules
 from api_regress.core.runner import merge_headers
 from api_regress.core.samples import Sample
 
@@ -57,9 +58,7 @@ class Reporter:
 
 
 def _rules(suite: Suite, request: Request) -> dict[RuleRef, Rule]:
-    rules = {RuleRef(scope="defaults", index=i): rule for i, rule in enumerate(suite.defaults.rules)}
-    rules.update({RuleRef(scope="request", index=i): rule for i, rule in enumerate(request.rules)})
-    return rules
+    return {compiled.ref: compiled.rule for compiled in compile_rules(suite, request)}
 
 
 def _success(suite: Suite, request: Request) -> SuccessSpec | None:

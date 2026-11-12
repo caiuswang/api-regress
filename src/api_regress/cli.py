@@ -83,7 +83,7 @@ def _print_validation(report: service.ValidationReport) -> None:
     if report.warnings:
         click.echo(f"warnings ({len(report.warnings)}):")
         for w in report.warnings:
-            click.echo(f"  [{w.code}] {format_where(report.source, w.line, w.location)} {w.message}")
+            click.echo(f"  [{w.code}] {format_where(w.file or report.source, w.line, w.location)} {w.message}")
 
 
 @cli.command()

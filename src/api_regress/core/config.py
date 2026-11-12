@@ -15,7 +15,7 @@ import httpx
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
-from api_regress.core import expr, paths
+from api_regress.core import expr, paths, rulesfile
 from api_regress.core.models import SIDES, Level, Loc, Side, format_loc
 
 log = logging.getLogger(__name__)
@@ -95,6 +95,15 @@ class Rule(_Model):
 RULE_ATTRS = tuple(name for name in Rule.model_fields if name != "path")
 
 
+@dataclass(frozen=True)
+class FileRule:
+    """规则文件展开出的一条规则。file 是规则文件路径（相对路径已按 suite 所在目录拼好），line 是属性所在的行。"""
+
+    rule: Rule
+    file: str
+    line: int | None
+
+
 class Assert(_Model):
     expr: str
     level: Level = "suspicious"
@@ -119,8 +128,16 @@ class Request(_Model):
     headers: dict[str, str] = {}
     compare_headers: list[str] = []
     success: str | None = None
+    rules_file: str | None = None
     rules: list[Rule] = []
     asserts: list[Assert] = []
+
+    _file_rules: list[FileRule] = PrivateAttr(default_factory=list)
+
+    @property
+    def file_rules(self) -> list[FileRule]:
+        """rules_file 展开出的规则，加载 suite 时填上；没写 rules_file 时为空。"""
+        return self._file_rules
 
     @field_validator("name")
     @classmethod
@@ -420,7 +437,7 @@ def _compose(text: str, ctx: _Ctx) -> Any:
         raise ctx.error(f"YAML 无法加载：{exc}") from None
 
 
-def _parse_yaml(text: str, ctx: _Ctx) -> Any:
+def _parse_yaml(text: str, ctx: _Ctx, what: str = "suite", empty_ok: bool = False) -> Any:
     node, data = _compose(text, ctx)
     line_map = _LineMap()
     if node is not None:
@@ -428,8 +445,10 @@ def _parse_yaml(text: str, ctx: _Ctx) -> Any:
     ctx.lines = line_map.lines
     if line_map.dups:
         raise ConfigError([ctx.issue(loc, f"重复的字段 {loc[-1]!r}", line) for loc, line in line_map.dups])
+    if data is None and empty_ok:
+        return None
     if not isinstance(data, dict):
-        raise ctx.error("suite 顶层必须是一个映射（key: value）", 1)
+        raise ctx.error(f"{what}顶层必须是一个映射（key: value）", 1)
     return data
 
 
@@ -534,6 +553,77 @@ def _substitute(raw: dict, env: Mapping[str, str], ctx: _Ctx, sides: Collection[
     return data, sub
 
 
+# ---------- 规则文件 ----------
+
+
+def _rule_issues(raw: rulesfile.RawRule, exc: ValidationError, ctx: _Ctx) -> list[ConfigIssue]:
+    out = []
+    for err in exc.errors():
+        loc = _clean_loc(err["loc"])
+        attr_loc = raw.attr_locs.get(str(loc[0])) if loc else None
+        where = f"{raw.path} ${format_loc(loc)}" if loc else raw.path
+        out.append(ConfigIssue(source=ctx.source, location=where, message=_error_message(err),
+                               line=_lookup_line(ctx.lines, attr_loc or raw.loc)))  # fmt: skip
+    return out
+
+
+def parse_rules_file(text: str, source: str) -> list[FileRule]:
+    """解析规则文件文本，展开成规则。有问题时抛 ConfigError，位置是规则文件里的行号和节点路径。"""
+    ctx = _Ctx(source)
+    expansion = rulesfile.expand(_parse_yaml(text, ctx, "规则文件", empty_ok=True), RULE_ATTRS)
+    issues = [
+        ConfigIssue(source=source, location=p.where, message=p.message, line=_lookup_line(ctx.lines, p.loc))
+        for p in expansion.problems
+    ]
+    rules = []
+    for raw in expansion.rules:
+        try:
+            rule = Rule.model_validate({"path": raw.path, **raw.attrs})
+        except ValidationError as exc:
+            issues += _rule_issues(raw, exc, ctx)
+            continue
+        rules.append(FileRule(rule, source, _lookup_line(ctx.lines, raw.loc)))
+    if issues:
+        raise ConfigError(sorted(issues, key=lambda i: i.line or 0))
+    return rules
+
+
+def _rules_file_path(base_dir: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else base_dir / path
+
+
+def _load_rules_file(path: Path, loc: Loc, ctx: _Ctx) -> list[FileRule]:
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        detail = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
+        raise ConfigError([ctx.issue(loc, f"无法读取规则文件 {path}：{detail}")]) from None
+    rules = parse_rules_file(text, str(path))
+    log.info("规则文件加载完成：%s，%d 条规则", path, len(rules))
+    return rules
+
+
+def _attach_rules_files(suite: Suite, ctx: _Ctx, base_dir: Path, unresolved: set[Loc]) -> list[ConfigIssue]:
+    """按 suite 所在目录解析 rules_file，展开后挂到请求上。同一个文件只读一次；值来自缺失变量的跳过。"""
+    cache: dict[Path, list[FileRule]] = {}
+    issues: list[ConfigIssue] = []
+    for i, req in enumerate(suite.requests):
+        loc: Loc = ("requests", i, "rules_file")
+        if req.rules_file is None or loc in unresolved:
+            continue
+        path = _rules_file_path(base_dir, req.rules_file)
+        try:
+            if path not in cache:
+                cache[path] = _load_rules_file(path, loc, ctx)
+        except ConfigError as exc:
+            issues += exc.issues
+            cache[path] = []
+            continue
+        req._file_rules = cache[path]
+    return issues
+
+
 def _request_count(raw: dict) -> int:
     requests = raw.get("requests")
     return len(requests) if isinstance(requests, list) else 0
@@ -544,10 +634,12 @@ def load_suite_text(
     source: str = "<suite>",
     sides: Collection[Side] = (),
     env: Mapping[str, str] | None = None,
+    base_dir: Path | None = None,
 ) -> LoadedSuite:
     """解析 suite 文本。sides 是本命令需要的 target：这些 target 和共用部分缺变量时报错，其余只记录。
 
-    sides 为空（validate）且有字段因缺变量无法校验类型时，抛 UnverifiedSuite。"""
+    sides 为空（validate）且有字段因缺变量无法校验类型时，抛 UnverifiedSuite。
+    rules_file 的相对路径按 base_dir 解析，默认是 source 所在的目录。"""
     ctx = _Ctx(source)
     raw = _parse_yaml(text, ctx)
     data, sub = _substitute(raw, os.environ if env is None else env, ctx, sides)
@@ -564,6 +656,9 @@ def load_suite_text(
             raise ConfigError(bad) from None
         raise UnverifiedSuite(missing, exc.fields, _request_count(raw)) from None
     issues = _post_checks(suite, ctx, sides, unresolved) + _expr_issues(data, ctx, unresolved)
+    if issues:
+        raise ConfigError(issues)
+    issues = _attach_rules_files(suite, ctx, Path(source).parent if base_dir is None else base_dir, unresolved)
     if issues:
         raise ConfigError(issues)
     loaded = LoadedSuite(source=source, suite=suite, raw=raw, missing_vars=missing)

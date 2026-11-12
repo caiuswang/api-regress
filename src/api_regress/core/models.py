@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from api_regress.core import paths
 
@@ -33,6 +33,15 @@ WarningCode = Literal[
 Loc = tuple[str | int, ...]
 
 
+def _is_none(value: Any) -> bool:
+    return value is None
+
+
+def omitted_if_none() -> Any:
+    """v2 新增的可选字段：值为 None 时不写进 result.json，不使用新功能时输出和以前逐字节相同。"""
+    return Field(default=None, exclude_if=_is_none)
+
+
 class WarningItem(BaseModel):
     """提示信息。不是 finding，不参与退出码。"""
 
@@ -42,6 +51,8 @@ class WarningItem(BaseModel):
     path: str | None = None
     location: str | None = None
     line: int | None = None
+    file: str | None = omitted_if_none()
+    """warning 来自规则文件时为规则文件路径，此时 line 是规则文件里的行号。"""
 
 
 def format_loc(loc: Sequence[str | int]) -> str:
@@ -77,13 +88,18 @@ FindingType = Literal[
 ]
 
 
+RuleScope = Literal["defaults", "rules_file", "request"]
+
+
 class RuleRef(BaseModel):
-    """规则的位置：defaults.rules[index] 或本请求的 rules[index]。"""
+    """规则的位置：defaults.rules[index]、本请求 rules_file 展开后的第 index 条（附文件和行号），或本请求的 rules[index]。"""
 
     model_config = ConfigDict(frozen=True)
 
-    scope: Literal["defaults", "request"]
+    scope: RuleScope
     index: int
+    file: str | None = omitted_if_none()
+    line: int | None = omitted_if_none()
 
 
 class Absent(BaseModel):
