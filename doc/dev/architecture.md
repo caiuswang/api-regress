@@ -355,7 +355,7 @@ run 目录两侧和快照共用。请求文件只放元数据，每个 sample �
 
 - **请求文件**：`name`、`fingerprint`、`fingerprint_version`、`samples[]`。sample 是 `url`、`status`、`headers`、`body_file`、`body_formatted`、`body_size`、`body_sha256`、`elapsed_ms`、`retries`；body 为空时只有 `body_size: 0`；网络错误只有 `url`、`status`（null）、`error`、`retries`。
 - **body 文件名**：`<序号>.<扩展名>`，序号从 1 开始、等于 sample 的位置。读回时先用 `BODY_FILE` 正则和序号检查 `body_file`（`_check_body_file`），**通过后才拼路径**，所以改过的请求文件写不出指向别处的路径；再核对大小和 SHA-256。
-- **格式化**（`stored_body` / `formatted_json`）：Content-Type 是 JSON（`jsonload.is_json_media`）时，用 `jsonload.load_body` 解析、`jsonfmt.pretty_json` 输出。例外存原始字节：charset 不是 UTF-8（`codecs.lookup(charset_of(...)).name`）、解析失败、有 `duplicate_key`。最后**自检**：把格式化结果重新 `load_body`，`repr(value)`（能区分 `Decimal('12.50')` 和 `Decimal('12.5')`，也能比较 `NaN`）和 warning code 列表都和原文相同才用，否则存原始字节。所以对比引擎从格式化文件里读到的值和 warning 与原始响应完全一样。格式化是幂等的（再格式化一次结果不变）。
+- **格式化**（`stored_body` / `formatted_json`）：Content-Type 是 JSON（`jsonload.is_json_media`）时，用 `jsonload.load_body` 解析、`jsonfmt.pretty_json` 输出。例外存原始字节：charset 不是 UTF-8（`jsonload.charset_of` 返回的已是规范化后的名字）、解析失败、有 `duplicate_key`。最后**自检**：把格式化结果重新 `load_body`，`repr(value)`（能区分 `Decimal('12.50')` 和 `Decimal('12.5')`，也能比较 `NaN`）和 warning code 列表都和原文相同才用，否则存原始字节。所以对比引擎从格式化文件里读到的值和 warning 与原始响应完全一样。格式化是幂等的（再格式化一次结果不变）。
 - **扩展名**：JSON 响应 `.json`（不论是否格式化）；否则能按 UTF-8 严格解码为 `.txt`，不能为 `.bin`。读回时不看扩展名。
 - **旧格式**：sample 里有 `body` / `body_b64` 时抛 `LegacyFormatError`（`SampleFormatError` 的子类），快照和 accept 各自给出重录或重新运行的提示。快照 `schema_version` 仍是 1。
 - **写入顺序**（`write_side_file`）：先写 body 文件，最后写请求文件。
