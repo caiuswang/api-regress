@@ -89,10 +89,15 @@ def test_duplicate_name():
     assert "重复" in issue.message
 
 
-@pytest.mark.parametrize("name", ["a b", "a/b", "中文", ""])
+@pytest.mark.parametrize("name", ["a b", "a/b", "中文", "", ".", ".."])
 def test_invalid_name(name):
     [issue] = errors(MINI.replace("name: a", f'name: "{name}"'))
     assert issue.location == "requests[0].name"
+
+
+@pytest.mark.parametrize("name", ["...", ".a", "a..b", "v1.2"])
+def test_dotted_names_are_valid(name):
+    assert load(MINI.replace("name: a", f'name: "{name}"')).suite.requests[0].name == name
 
 
 def test_missing_var_is_error_when_needed():

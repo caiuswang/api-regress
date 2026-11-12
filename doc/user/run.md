@@ -151,7 +151,7 @@ exit 1: 存在 1 条达到 breaking 级别的 finding
 
 请求文件里每个 sample 记录 URL、状态码、`Content-Type` 和 `compare_headers` 列出的响应头、`body_file`（body 文件名）、`body_formatted`（是否格式化过）、`body_size`（body 文件的字节数）、`body_sha256`（body 文件的 SHA-256）、耗时、重试次数；body 为空时只有 `body_size: 0`；网络错误的 sample 只有 URL、错误原因和重试次数。 **请求头一律不保存**，所以 token 不会落盘；其他响应头（如 `Set-Cookie`）也不保存。但响应体原样保存，不要把 run 目录提交或上传到公开的地方。
 
-`--out` 指向已存在的非空目录时，只有它是之前的 run 目录（里面的 `result.json` 是 api-regress 写的）才会复用（先清掉旧的 `baseline/`、`candidate/`、`samples/` 和报告）；否则拒绝写入，退出码 3，以免把文件混进无关的目录或删掉别人的文件。`--log-file` 放在 `--out` 目录里不影响判断。
+`--out` 指向已存在的非空目录时，只有它是之前的 run 目录（里面的 `result.json` 是 api-regress 写的）才会复用（先清掉旧的 `baseline/`、`candidate/`、`samples/` 和报告）。上次中途失败留下的目录（还没写出 `result.json`）也能复用，前提是里面只有 api-regress 写出的 `baseline/`、`candidate/`、`samples/` 和报告，而且样子和 api-regress 写的一致（例如 `samples/` 下只有 `<side>/<name>/1.json` 这样的 body 文件）；否则拒绝写入，退出码 3，以免把文件混进无关的目录或删掉别人的文件。`--log-file` 放在 `--out` 目录里不影响判断。
 
 `--out` 在发请求之前就检查，不能用时一个请求都不发。写入阶段才失败时（例如磁盘满），退出码为 3，stdout 的 result 行显示 `result: 未写入`。某个报告写不出来时，其他报告和 `result.json` 照常写，退出码为 3，原因里写明是哪个报告出错。
 

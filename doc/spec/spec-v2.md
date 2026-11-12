@@ -338,9 +338,10 @@ v1 关于快照和 run 目录的规则都保留，只是"一条请求的文件"�
 - **record / accept 原样复制没变的请求**：请求文件和 `samples/<name>/` 目录都按字节原样复制，不解析、不校验 body（和 v1 一样，大快照上 `--only` 不用读全部 body）。`samples/<name>/` 不存在时照样复制请求文件，到 `compare` 时再按损坏报出来，用 `snapshot record --only NAME` 重录即可修好。
 - **accept**：读出 run 目录里的 `candidate/<name>.json` 和 `samples/candidate/<name>/`（同时按 6.3 校验），再写成快照的 `requests/<name>.json` 和 `samples/<name>/`。格式化是幂等的，写出的 body 文件和 run 目录里的逐字节相同。校验不通过时和 v1 的候选请求文件损坏一样：拒绝这条请求（原因写"run 目录里的候选响应损坏：…"），run 目录按损坏处理，退出码 3。
 - **快照损坏的判定**：v1 的条件不变，`compare` 另外检查要用到的 body 文件（6.3）。
-- **run 目录的复用**：`samples/` 和两侧目录一样，复用前整个删掉；判断"上次中断留下的 run 目录"时，`samples/` 下允许任意文件。
+- **run 目录的复用**：`samples/` 和两侧目录一样，复用前整个删掉；判断"上次中断留下的 run 目录"时，`samples/` 必须是 api-regress 写出的样子：是目录，下面只有 `baseline/`、`candidate/` 目录，再下一层是以合法请求 name 命名的目录，里面只有 `<序号>.json|txt|bin` 文件；两侧目录必须是只含 `.json` 文件的目录，报告必须是文件。不符合就拒绝复用（退出码 3），不发请求、不删任何东西，免得把用户自己的同名文件或目录当成残留删掉。
 - **原子写入**：`samples/` 和 `requests/` 一起写在同级的临时目录里，整体交换，和 v1 相同。
 - **不保存请求头**、响应体原样保存、不要把快照提交到公开的地方：都和 v1 相同。body 单独成文件后更容易被误提交，`doc/user/snapshot.md` 要写明。
+- **请求 name 不能是 `.` 或 `..`**：name 现在也用作 `samples/` 下的目录名，`.`、`..` 会指向 `samples/` 本身或它的上级，所以配置校验时拒绝，读回 manifest 和 `result.json` 时也按不合法的请求名处理。其他含点的 name（`...`、`v1.2`）不受影响。
 - **请求 name 只差大小写**：在 macOS、Windows 上 `samples/` 下的目录也会冲突，和 v1 的请求文件冲突是同一个问题。
 
 ## 7. 验收标准

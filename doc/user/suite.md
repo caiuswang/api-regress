@@ -95,7 +95,7 @@ requests:
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `name` | 是 | 只能包含 `A-Z a-z 0-9 _ . -`，suite 内唯一。**区分大小写**：`order-list` 和 `Order-List` 是两条请求，但在 macOS、Windows 上它们的快照文件会互相覆盖，不要这样起名 |
+| `name` | 是 | 只能包含 `A-Z a-z 0-9 _ . -`，不能是 `.` 或 `..`，suite 内唯一。**区分大小写**：`order-list` 和 `Order-List` 是两条请求，但在 macOS、Windows 上它们的快照文件会互相覆盖，不要这样起名 |
 | `method` | 是 | `GET` 或 `HEAD`。写方法（POST/PUT/PATCH/DELETE）一律报错 |
 | `path` | 是 | 拼在 `base_url` 后面的路径 |
 | `query` | 否 | 查询参数，值必须是字符串（`page: "1"`） |

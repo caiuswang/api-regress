@@ -29,6 +29,7 @@ from pydantic import BaseModel, ValidationError
 from api_regress import __version__
 from api_regress.core.config import NAME_PATTERN
 from api_regress.core.samples import (
+    BODIES_DIR,
     FINGERPRINT_VERSION,
     LegacyFormatError,
     Sample,
@@ -44,7 +45,6 @@ log = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 MANIFEST = "manifest.json"
 REQUESTS_DIR = "requests"
-BODIES_DIR = "samples"
 
 Source = Literal["record", "accept"]
 

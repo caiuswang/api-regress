@@ -246,3 +246,40 @@ def test_leftover_with_samples_dir_is_reusable(tmp_path):
     report = run(tmp_path, suite_text(req("a")), Server().both("/x", j({"a": 1})), out=out)
     assert report.exit_code == 0
     assert not (out / "samples" / "candidate" / "a" / "1.bin").exists()
+
+
+def _foreign_samples_dir(out):
+    (out / "samples" / "photos").mkdir(parents=True)
+    (out / "samples" / "photos" / "cat.jpg").write_bytes(b"x")
+
+
+def _foreign_body_file(out):
+    (out / "samples" / "baseline" / "a").mkdir(parents=True)
+    (out / "samples" / "baseline" / "a" / "notes.txt").write_text("x")
+
+
+def _samples_is_a_file(out):
+    out.mkdir()
+    (out / "samples").write_text("x")
+
+
+def _side_is_a_file(out):
+    out.mkdir()
+    (out / "baseline").write_text("x")
+
+
+def _report_is_a_dir(out):
+    (out / "report.html" / "keep").mkdir(parents=True)
+
+
+@pytest.mark.parametrize("make", [_foreign_samples_dir, _foreign_body_file, _samples_is_a_file, _side_is_a_file,
+                                  _report_is_a_dir])  # fmt: skip
+def test_leftover_rule_rejects_lookalikes_before_sending(tmp_path, make):
+    """同名但不是 api-regress 写出的样子：拒绝复用，不发请求，也不删任何东西。"""
+    out = tmp_path / "out"
+    make(out)
+    before = sorted(p.relative_to(out) for p in out.rglob("*"))
+    server = Server().both("/x", j({"a": 1}))
+    report = run(tmp_path, suite_text(req("a")), server, out=out)
+    assert report.exit_code == 3 and not server.calls
+    assert sorted(p.relative_to(out) for p in out.rglob("*")) == before

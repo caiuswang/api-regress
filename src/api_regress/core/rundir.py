@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,14 +16,21 @@ from api_regress.core.config import NAME_PATTERN
 from api_regress.core.result import RunResult
 from pydantic import ValidationError
 
-from api_regress.core.samples import Sample, SampleFormatError, SideFile, parse_side_document, write_side_file
+from api_regress.core.samples import (
+    BODIES_DIR,
+    BODY_FILE,
+    Sample,
+    SampleFormatError,
+    SideFile,
+    parse_side_document,
+    write_side_file,
+)
 
 log = logging.getLogger(__name__)
 
 DEFAULT_ROOT = Path("api-regress-out")
 RESULT_FILE = "result.json"
 SIDE_DIRS = ("baseline", "candidate")
-BODIES_DIR = "samples"
 REPORT_FILES = {"html": "report.html", "md": "report.md", "junit": "junit.xml"}
 """各种报告的文件名。复用 run 目录时先删掉旧的，免得留下和本次结果对不上的报告。"""
 
@@ -56,18 +63,34 @@ def _written_by_us(path: Path) -> bool:
     )
 
 
-_LEFTOVER_ENTRIES = frozenset({*SIDE_DIRS, BODIES_DIR, *REPORT_FILES.values()})
+def _only(directory: Path, accept: Callable[[Path], bool]) -> bool:
+    return directory.is_dir() and not directory.is_symlink() and all(accept(p) for p in directory.iterdir())
+
+
+def _is_json_file(path: Path) -> bool:
+    return path.is_file() and path.suffix == ".json"
+
+
+def _is_body_file(path: Path) -> bool:
+    return path.is_file() and BODY_FILE.fullmatch(path.name) is not None
+
+
+def _is_bodies_side(path: Path) -> bool:
+    """`samples/<side>/`：每条请求一个目录，里面只有 body 文件。"""
+    return path.name in SIDE_DIRS and _only(path, lambda d: NAME_PATTERN.fullmatch(d.name) is not None and _only(d, _is_body_file))
+
+
+_LEFTOVER_CHECKS: dict[str, Callable[[Path], bool]] = {
+    **{side: lambda p: _only(p, _is_json_file) for side in SIDE_DIRS},
+    BODIES_DIR: lambda p: _only(p, _is_bodies_side),
+    **{name: Path.is_file for name in REPORT_FILES.values()},
+}
+"""上次中断留下的条目各自该是什么样子：和 api-regress 写出的完全一致才算，免得把别人的同名文件或目录当成残留删掉。"""
 
 
 def _is_leftover(entries: list[Path]) -> bool:
-    """上次写到一半中断（result.json 最后写，所以还没有）：只有两侧目录、body 目录和报告；
-    两侧目录里只有 .json 文件，body 目录里不限。"""
-    for entry in entries:
-        if entry.name not in _LEFTOVER_ENTRIES:
-            return False
-        if entry.name in SIDE_DIRS and entry.is_dir() and any(not (f.is_file() and f.suffix == ".json") for f in entry.iterdir()):
-            return False
-    return True
+    """上次写到一半中断（result.json 最后写，所以还没有）：只有两侧目录、body 目录和报告，且每项都是 api-regress 写出的样子。"""
+    return all(entry.name in _LEFTOVER_CHECKS and _LEFTOVER_CHECKS[entry.name](entry) for entry in entries)
 
 
 def _is_reusable(out: Path, ignore: Collection[Path]) -> bool:

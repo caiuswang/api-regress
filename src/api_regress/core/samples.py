@@ -7,7 +7,6 @@ run 目录的 `baseline/`、`candidate/` 和快照共用同一种落盘格式：
 
 from __future__ import annotations
 
-import codecs
 import hashlib
 import json
 import re
@@ -53,6 +52,8 @@ def kept_headers(headers: Mapping[str, str], compare_headers: Iterable[str]) -> 
 
 # ---------- body 文件 ----------
 
+BODIES_DIR = "samples"
+"""run 目录和快照里放 body 文件的目录名。"""
 BODY_FILE = re.compile(r"([1-9][0-9]*)\.(json|txt|bin)")
 
 
@@ -75,7 +76,7 @@ def formatted_json(body: bytes, content_type: str | None) -> bytes | None:
     例外：charset 不是 UTF-8（输出是 UTF-8，和存下的 Content-Type 对不上）、解析失败、有重复 key
     （格式化只剩最后一个，duplicate_key 提示就没了）。最后把结果重新解析一遍自检：值（repr 能区分 12.50 和 12.5）
     和 warning 都要和原文相同。"""
-    if codecs.lookup(charset_of(content_type)).name != "utf-8":
+    if charset_of(content_type) != "utf-8":
         return None
     loaded = load_body(body, content_type)
     if not loaded.is_json or "duplicate_key" in _warning_codes(loaded):
