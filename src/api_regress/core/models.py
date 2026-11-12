@@ -102,6 +102,15 @@ class RuleRef(BaseModel):
     line: int | None = omitted_if_none()
 
 
+def rule_where(scope: RuleScope, index: int, file: str | None, line: int | None) -> str:
+    """规则写在哪里：`defaults.rules[0]`、`rules[1]`，规则文件里的写 `rules_file <文件>:<行号>`。
+
+    报告的「命中的规则」和未命中的规则都用这种写法。"""
+    if scope == "rules_file":
+        return f"rules_file {file}:{line}" if line else f"rules_file {file}"
+    return f"defaults.rules[{index}]" if scope == "defaults" else f"rules[{index}]"
+
+
 class Absent(BaseModel):
     """字段不存在，和 null 区分开。输出为 {"absent": true}。"""
 

@@ -15,6 +15,15 @@ from pydantic import BaseModel
 
 from api_regress import __version__
 from api_regress.core import accept as acceptance, expr, reportdata, rundir, snapshot
+from api_regress.core.command import (
+    CommandReport,
+    Stop,
+    finish_log,
+    internal_error,
+    only_issues,
+    suite_error,
+    usage_issue,
+)
 from api_regress.core.config import (
     ConfigError,
     ConfigIssue,
@@ -125,52 +134,12 @@ async def validate_suite(path: str | Path, env: Mapping[str, str] | None = None)
 # ---------- 共用 ----------
 
 
-class CommandReport(BaseModel):
-    """各命令返回值的公共部分。suite 或参数有问题时 errors 列出问题。"""
-
-    source: str
-    exit_code: int
-    exit_reason: str
-    errors: list[ConfigIssue] = []
-
-
-class _Stop(Exception):
-    """提前结束一个命令：带着已经算好的返回值。"""
-
-    def __init__(self, report: CommandReport):
-        self.report = report
-
-
 def _now() -> datetime:
     return datetime.now().astimezone()
 
 
-def _usage_issue(source: str, location: str, message: str) -> ConfigIssue:
-    return ConfigIssue(source=source, location=location, message=message)
-
-
-def _finish_log(command: str, code: int, reason: str) -> None:
-    log.info("%s 结束：退出码 %d（%s）", command, code, reason)
-
-
-def _suite_error(command: str, source: str, issues: list[ConfigIssue], report: type[CommandReport]) -> _Stop:
-    code, reason = exit_code(ExitState(suite_error=True))
-    for issue in issues:
-        log.error("%s", issue)
-    _finish_log(command, code, f"{reason}，{len(issues)} 个错误")
-    return _Stop(report(source=source, exit_code=code, exit_reason=reason, errors=issues))
-
-
-def _version_error(command: str, source: str, exc: Exception, report: type[CommandReport]) -> _Stop:
-    return _suite_error(command, source, [_usage_issue(source, "--dir", str(exc))], report)
-
-
-def _internal_error(command: str, source: str, detail: str, report: type[CommandReport]) -> _Stop:
-    code, reason = exit_code(ExitState(internal_error=True))
-    reason = f"{reason}：{detail}"
-    log.error("%s", detail)
-    _finish_log(command, code, reason)
-    return _Stop(report(source=source, exit_code=code, exit_reason=reason))
+def _version_error(command: str, source: str, exc: Exception, report: type[CommandReport]) -> Stop:
+    return suite_error(command, source, [usage_issue(source, "--dir", str(exc))], report)
 
 
 async def _load(command: str, path: str | Path, sides: Collection[Side], env: Mapping[str, str] | None,
@@ -178,19 +147,19 @@ async def _load(command: str, path: str | Path, sides: Collection[Side], env: Ma
     try:
         return await asyncio.to_thread(load_suite, path, sides, env)
     except ConfigError as exc:
-        raise _suite_error(command, str(path), exc.issues, report) from None
+        raise suite_error(command, str(path), exc.issues, report) from None
 
 
 def _check_usage(command: str, source: str, names: list[str], only: list[str], overrides: dict[str, str | None],
                  report: type[CommandReport]) -> None:  # fmt: skip
     """--only 的 name 必须存在；覆盖地址必须合法。"""
-    issues = [_usage_issue(source, "--only", f"没有名为 {name!r} 的请求") for name in only if name not in names]
+    issues = only_issues(source, names, only)
     for flag, url in overrides.items():
         problem = None if url is None else base_url_problem(url)
         if problem:
-            issues.append(_usage_issue(source, flag, problem))
+            issues.append(usage_issue(source, flag, problem))
     if issues:
-        raise _suite_error(command, source, issues, report)
+        raise suite_error(command, source, issues, report)
 
 
 def _snapshot_step(command: str, source: str, report: type[CommandReport], step: Callable[[], T]) -> T:
@@ -200,7 +169,7 @@ def _snapshot_step(command: str, source: str, report: type[CommandReport], step:
     except snapshot.SnapshotVersionError as exc:
         raise _version_error(command, source, exc, report) from None
     except OSError as exc:
-        raise _internal_error(command, source, str(exc), report) from None
+        raise internal_error(command, source, str(exc), report) from None
 
 
 def _open_snapshot(command: str, source: str, root: Path, clean: bool, report: type[CommandReport]
@@ -393,14 +362,14 @@ def _finish(command: Mode, source: str, options: RunOptions, out: Path, executed
         reports = _write_outputs(out, rendered, result)
     except OSError as exc:
         return _write_failed(command, source, f"无法写入 run 目录 {out}（{exc}）", result)
-    _finish_log(command, code, reason)
+    finish_log(command, code, reason)
     return RunReport(
         source=source, exit_code=code, exit_reason=reason, result=result, out_dir=str(out), reports=reports
     )
 
 
 def _write_failed(command: Mode, source: str, detail: str, result: RunResult) -> RunReport:
-    report = _internal_error(command, source, detail, RunReport).report
+    report = internal_error(command, source, detail, RunReport).report
     assert isinstance(report, RunReport)
     report.result = result.model_copy(update={"exit_code": report.exit_code, "exit_reason": report.exit_reason})
     return report
@@ -431,7 +400,7 @@ async def _paired(command: Mode, path: str | Path, options: RunOptions, env: Map
     try:
         rundir.check(out, _ignored(options))
     except OSError as exc:
-        raise _internal_error(command, source, str(exc), RunReport) from None
+        raise internal_error(command, source, str(exc), RunReport) from None
     log.info("%s 开始：%d 条请求，run 目录 %s", command, len(plans), out)
     targets = Targets(options.baseline_url if command == "run" else None, options.candidate_url, snap)
     executor = Executor(loaded.suite, command, targets, on_event, cancel_event)
@@ -451,7 +420,7 @@ async def run(
     """两侧都实时请求：基线串行 2 次、候选 1 次，然后逐条对比，写 run 目录和 result.json。"""
     try:
         return await _paired("run", path, options or RunOptions(), env, on_event, cancel_event, transport)
-    except _Stop as stop:
+    except Stop as stop:
         assert isinstance(stop.report, RunReport)
         return stop.report
 
@@ -474,7 +443,7 @@ async def compare(
     快照缺失或指纹不一致的请求是 inconclusive，但候选照样请求并写进 run 目录，随后可以 accept。"""
     try:
         return await _paired("compare", path, options, env, on_event, cancel_event, transport)
-    except _Stop as stop:
+    except Stop as stop:
         assert isinstance(stop.report, RunReport)
         return stop.report
 
@@ -543,7 +512,7 @@ async def _record(path: str | Path, options: RecordOptions, env: Mapping[str, st
         internal_error=_internal(executor, executed), incomplete=len(requests) - len(entries), incomplete_text=_NOT_WRITTEN
     )
     code, reason = exit_code(state)
-    _finish_log("record", code, reason)
+    finish_log("record", code, reason)
     return RecordReport(
         source=source, exit_code=code, exit_reason=reason, snapshot=str(options.snapshot), requests=requests,
         written=[e.name for e in entries], cancelled=any(item.cancelled for item in executed),
@@ -564,7 +533,7 @@ async def record(
     error、401/403/429、5xx、不满足 success 的请求不写入，保留旧 sample。"""
     try:
         return await _record(path, options, env, on_event, cancel_event, transport)
-    except _Stop as stop:
+    except Stop as stop:
         assert isinstance(stop.report, RecordReport)
         return stop.report
 
@@ -598,7 +567,7 @@ def _run_dir_result(run_dir: Path) -> RunResult:
     try:
         return rundir.read_result(run_dir)
     except OSError as exc:
-        raise _internal_error("accept", str(run_dir), str(exc), AcceptReport) from None
+        raise internal_error("accept", str(run_dir), str(exc), AcceptReport) from None
 
 
 def _judge_accept(run_dir: Path, req: RequestResult) -> tuple[snapshot.NewEntry | None, str | None, bool]:
@@ -622,7 +591,7 @@ def accept_sync(run_dir: str | Path, options: AcceptOptions) -> AcceptReport:
     """把 run 目录里的候选响应按请求合并进快照（快照不存在时新建）。不读 suite。"""
     try:
         return _accept(Path(run_dir), options)
-    except _Stop as stop:
+    except Stop as stop:
         assert isinstance(stop.report, AcceptReport)
         return stop.report
 
@@ -649,7 +618,7 @@ def _accept(run_dir: Path, options: AcceptOptions) -> AcceptReport:
     if entries:
         _save("accept", source, root, entries, base, AcceptReport)
     code, reason = exit_code(ExitState(internal_error=broken, incomplete=len(rejected), incomplete_text=_NOT_WRITTEN))
-    _finish_log("accept", code, reason)
+    finish_log("accept", code, reason)
     return AcceptReport(
         source=source, exit_code=code, exit_reason=reason, snapshot=str(options.snapshot), accepted=[e.name for e in entries],
         rejected=rejected,
@@ -658,3 +627,4 @@ def _accept(run_dir: Path, options: AcceptOptions) -> AcceptReport:
 
 async def accept(run_dir: str | Path, options: AcceptOptions) -> AcceptReport:
     return await asyncio.to_thread(accept_sync, run_dir, options)
+

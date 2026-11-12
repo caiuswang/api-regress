@@ -50,6 +50,8 @@ flowchart LR
   SVC --> RDATA[core.reportdata]
   RDATA --> RUNNER
   RDATA --> RESULT
+  SVC --> CMD[core.command]
+  CMD --> RESULT
   CLI --> REPORT[api_regress.report]
   REPORT --> RDATA
   REPORT --> JSONLOAD
@@ -65,7 +67,7 @@ flowchart LR
 
 | 模块 | 职责 | 关键入口 |
 |---|---|---|
-| `core/models.py` | 跨模块共用的枚举和模型：`Level`、`Side`、`WarningCode`、`WarningItem`；finding 相关：`FindingType`、`Finding`、`ValueType`、`RuleRef`、`PathToken`、`Absent`（单例 `ABSENT`）；`Suggestion` | `format_loc`、`to_path_tokens`、`finding_id` |
+| `core/models.py` | 跨模块共用的枚举和模型：`Level`、`Side`、`WarningCode`、`WarningItem`；finding 相关：`FindingType`、`Finding`、`ValueType`、`RuleRef`、`PathToken`、`Absent`（单例 `ABSENT`）；`Suggestion` | `format_loc`、`to_path_tokens`、`finding_id`、`rule_where`（规则位置的写法） |
 | `core/paths.py` | 路径语法：解析、格式化、匹配、泛化、具体程度 | `parse`、`format_path`、`match`、`covers`、`overlaps`、`generalize`、`specificity` |
 | `core/config.py` | suite 的 pydantic 模型；YAML 加载与规模限制；`${VAR}` 替换；报错行号；加载请求的规则文件并校验展开出的规则 | `load_suite`、`load_suite_text`、`parse_rules_file`、`FileRule`、`Request.file_rules`、`substitute_env`、`Suite.success_of`、`base_url_problem`、`format_where`、`NAME_PATTERN` |
 | `core/rulesfile.py` | 规则文件的展开：把和响应同形的树展开成「路径 + 属性」的原始规则，检查 key、值、路径和重复路径；不依赖 config，属性值交给 config 用 `Rule` 校验 | `expand`、`RawRule`、`Problem` |
@@ -87,16 +89,17 @@ flowchart LR
 | `core/result.py` | `result.json` 的数据模型；退出码谓词表 `EXIT_RULES` | `RunResult`、`RequestResult`、`SampleInfo`、`Summary`、`UnmatchedRule`、`exit_code`、`run_exit_state` |
 | `core/rundir.py` | run 目录：默认目录名、复用规则、两侧请求文件和 body 文件（`samples/<side>/<name>/`）、`result.json` 的写入；accept 读回 | `default_out_dir`、`check`、`prepare`、`write_side`、`body_dir`、`write_result`、`read_result`、`read_side` |
 | `core/snapshot.py` | 快照：manifest 模型、读（含版本检查）、写前检查、按请求合并、原子替换、残留恢复 | `load`、`readable`、`check_writable`、`write`、`recover`、`Snapshot`、`Manifest`、`NewEntry`、`SnapshotError`、`SnapshotVersionError` |
+| `core/command.py` | 命令返回值的基类和提前结束的方式：suite 或参数有问题（2）、工具自身或文件出错（3），统一退出码、原因和日志 | `CommandReport`、`Stop`、`suite_error`、`internal_error`、`finish_log`、`usage_issue`、`only_issues` |
 | `core/accept.py` | accept 的判定：有序规则表 `ACCEPT_RULES` | `rejection` |
 | `core/executor.py` | 并发执行每条请求：并发名额、取消、进度事件、单条请求的意外异常；run / compare / record 三种模式 | `Executor`、`Executed`、`Targets`、`RequestStarted`、`RequestDone`、`CancelToken` |
 | `core/reportdata.py` | 报告的输入：`result.json` 之外渲染报告要用的信息（参与对比的两侧 sample、请求头名字、带 query 的请求路径，以及报出 finding 的 suite 配置：规则、asserts、生效的 success 和来源，suite 的对比模式），以及 `Reporter`（文件名 + 只在内存里渲染、返回 bytes 的函数） | `ReportInput`、`RequestExtras`、`SuccessSpec`、`Reporter`、`extras_for` |
-| `core/service.py` | 对外编排入口，提供 async 和同步两种调用；命令的前置检查和退出码；本次未命中的规则；调用报告渲染函数 | `validate_suite(_sync)`、`run(_sync)`、`compare(_sync)`、`record(_sync)`、`accept(_sync)`、`RunOptions`、`CompareOptions`、`RecordOptions`、`AcceptOptions`、`RunReport`、`RecordReport`、`AcceptReport`、`CommandReport` |
+| `core/service.py` | 对外编排入口，提供 async 和同步两种调用；命令的前置检查和退出码；本次未命中的规则；调用报告渲染函数 | `validate_suite(_sync)`、`run(_sync)`、`compare(_sync)`、`record(_sync)`、`accept(_sync)`、`RunOptions`、`CompareOptions`、`RecordOptions`、`AcceptOptions`、`RunReport`、`RecordReport`、`AcceptReport` |
 | `cli.py` | Click 命令行（`cli` 命令组 + 各子命令，快照命令在 `snapshot` 子命令组下）、日志初始化 | `main`、`cli`、`validate`、`run`、`snapshot`、`compare`、`record`、`accept`、`demo`、`setup_logging` |
 | `demo/server.py` | 本地演示服务：标准库 `ThreadingHTTPServer`；`/v1`、`/v2` 前缀选数据集，有序路由表 `ROUTES`；Decimal 原样输出；不开 `SO_REUSEADDR`，端口被占用时直接报错 | `make_server`、`base_url`、`dispatch`、`dumps`、`DemoServer`、`DEFAULT_PORT` |
 | `demo/data.py` | 演示数据：v1 固定数据，v2 的每处改动写在 `_v2_*` 函数里 | `DATASETS` |
 | `demo/__init__.py`、`demo/suites/` | 自带的 `pass.yaml`、`regress.yaml`（作为包数据随 wheel 发布）及写出方法 | `suite_text`、`write_suites`、`SUITE_NAMES` |
 | `report/__init__.py` | 格式名到 `Reporter` 的表 `FORMATS`；`--format none` 的名字 `NONE` | `reporters`、`FORMATS`、`NONE` |
-| `report/common.py` | 几种报告共用的展示逻辑：finding 的值怎么显示、curl 复现命令、状态码、规则引用、body 的展示文本（按原文小数位排版 JSON） | `finding_values`、`rules_text`、`rule_where`、`finding_note`、`rule_attrs_text`、`curl_command`、`side_views`、`body_text`、`pretty_json` / `compact_json`（从 `core.jsonfmt` 导入）、`status_codes`、`failing` |
+| `report/common.py` | 几种报告共用的展示逻辑：finding 的值怎么显示、curl 复现命令、状态码、规则引用、body 的展示文本（按原文小数位排版 JSON） | `finding_values`、`rules_text`、`rule_where`（从 `core.models` 导入）、`finding_note`、`rule_attrs_text`、`curl_command`、`side_views`、`body_text`、`pretty_json` / `compact_json`（从 `core.jsonfmt` 导入）、`status_codes`、`failing` |
 | `report/html.py`、`report/templates/report.html.j2` | `report.html`：Jinja2（autoescape），body 对照的截断 | `render`、`body_diff` |
 | `report/sidediff.py` | 两侧文本的并排对照表格（HTML，已转义）：行级对齐 + 有上限的行内高亮 | `table`、`row_groups` |
 | `report/md.py` | `report.md` | `render`、`cell` |
@@ -325,7 +328,7 @@ flowchart TD
 
 ## snapshot record / compare / accept
 
-三个命令共用 `service` 里的前置检查（`_load` 按命令需要的 target 加载 suite、`_check_usage` 检查 `--only` 和覆盖地址、`_open_snapshot` / `_compare_snapshot` 处理快照），任何一步不通过都用 `_Stop` 带着算好的返回值提前结束，**不发请求**。退出码都走 `result.exit_code`：record / accept 的「没写入」用 `ExitState.incomplete` 加 `incomplete_text`。
+命令返回值和提前结束的方式在 `core/command.py`（`CommandReport`、`Stop`、`suite_error`、`internal_error`）。三个命令共用 `service` 里的前置检查（`_load` 按命令需要的 target 加载 suite、`_check_usage` 检查 `--only` 和覆盖地址、`_open_snapshot` / `_compare_snapshot` 处理快照），任何一步不通过都用 `command.Stop` 带着算好的返回值提前结束，**不发请求**。退出码都走 `result.exit_code`：record / accept 的「没写入」用 `ExitState.incomplete` 加 `incomplete_text`。
 
 ```mermaid
 flowchart TD
@@ -394,6 +397,6 @@ run 目录两侧和快照共用。请求文件只放元数据，每个 sample �
 ## 日志
 
 - 标准库 `logging`。`cli.setup_logging` 把 `api_regress` logger 输出到 stderr，`--log-file` 时同时写文件。
-- **INFO 节点**：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）；run 开始的请求数（`service.run`）、每次请求的发出和返回（`runner.Runner`：请求名、target、方法、URL、状态码、耗时、重试次数；发出时只列请求头的**名字**）、每条请求的状态和 finding / warning 数（`flow.evaluate`）、汇总（`service._log_summary`）、写入的每个文件（`service._write_sides`、`service._write_outputs`、`rundir.write_result`）、各命令的退出码及原因（`service._finish_log`，由 `_finish`、`_suite_error`、`_internal_error`、`_record`、`_accept` 调用）；record / compare 开始的请求数（`service._record`、`service._paired`）、快照的读取和写入（`snapshot.load`、`snapshot.write`）、残留的删除和恢复（`snapshot.recover`，恢复记 WARNING）、compare 读中断残留（`snapshot.readable`，WARNING）、accept 拒绝的每条请求（`service._accept`）。
-- **WARNING**：validate 的 warning、重试（`runner.Runner._fetch`）。**ERROR**：suite 错误、`--out` / 快照 / run 目录不能用或写入失败（`service._suite_error`、`service._internal_error`）。快照目录不存在时 compare 记 WARNING。**DEBUG**：响应体的前 2KB（`repr` 形式）。
+- **INFO 节点**：suite 加载结果（`config.load_suite_text`）、校验失败（`service.validate_suite_sync`）、validate 退出码及原因（`cli.validate`）；run 开始的请求数（`service.run`）、每次请求的发出和返回（`runner.Runner`：请求名、target、方法、URL、状态码、耗时、重试次数；发出时只列请求头的**名字**）、每条请求的状态和 finding / warning 数（`flow.evaluate`）、汇总（`service._log_summary`）、写入的每个文件（`service._write_sides`、`service._write_outputs`、`rundir.write_result`）、各命令的退出码及原因（`command.finish_log`，由 `service._finish`、`command.suite_error`、`command.internal_error`、`service._record`、`service._accept` 调用）；record / compare 开始的请求数（`service._record`、`service._paired`）、快照的读取和写入（`snapshot.load`、`snapshot.write`）、残留的删除和恢复（`snapshot.recover`，恢复记 WARNING）、compare 读中断残留（`snapshot.readable`，WARNING）、accept 拒绝的每条请求（`service._accept`）。
+- **WARNING**：validate 的 warning、重试（`runner.Runner._fetch`）。**ERROR**：suite 错误、`--out` / 快照 / run 目录不能用或写入失败（`command.suite_error`、`command.internal_error`）。快照目录不存在时 compare 记 WARNING。**DEBUG**：响应体的前 2KB（`repr` 形式）。
 - **任何级别都不输出请求头的值**：`runner.Call.headers` 只传给 httpx；`Sample`、run 目录、快照、`result.json` 里没有请求头；保存的响应头只有 `Content-Type` 和 `compare_headers`。报错和 warning 只包含字段位置、变量名。`tests/test_cli.py`（validate）、`tests/test_run_cli.py`（run：stdout、stderr、日志文件、run 目录）和 `tests/test_snapshot_cli.py`（record → compare → accept：日志文件、快照、run 目录，响应的 `Set-Cookie` 里也放了哨兵）用哨兵 token 校验；`tests/test_run_cli.py` 的 run 目录里包含三种报告。

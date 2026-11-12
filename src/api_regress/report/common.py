@@ -12,7 +12,7 @@ import yaml
 from api_regress.core.config import Assert, Rule
 from api_regress.core.jsonfmt import compact_json, pretty_json
 from api_regress.core.jsonload import load_body
-from api_regress.core.models import Absent, Finding, Level, RuleRef, Side, WarningItem
+from api_regress.core.models import Absent, Finding, Level, RuleRef, Side, WarningItem, rule_where
 from api_regress.core.reportdata import ReportInput, RequestExtras
 from api_regress.core.result import FAIL_ON_LEVELS, RequestResult, RunResult
 from api_regress.core.samples import Sample
@@ -69,13 +69,6 @@ def rule_attrs_text(rule: Rule) -> str:
     attrs = rule.model_dump(exclude={"path"}, exclude_none=True, exclude_defaults=True)
     flow = yaml.safe_dump(attrs, default_flow_style=True, allow_unicode=True, sort_keys=False, width=1 << 30)
     return flow.strip()[1:-1]
-
-
-def rule_where(scope: str, index: int, file: str | None, line: int | None) -> str:
-    """规则写在哪里：`defaults.rules[0]`、`rules[1]`，规则文件里的写 `rules_file <文件>:<行号>`。"""
-    if scope == "rules_file":
-        return f"rules_file {file}:{line}" if line else f"rules_file {file}"
-    return f"defaults.rules[{index}]" if scope == "defaults" else f"rules[{index}]"
 
 
 def rule_ref_text(ref: RuleRef, extras: RequestExtras | None) -> str:
