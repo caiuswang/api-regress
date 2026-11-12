@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: complex-har-import
+expected_outcome: |
+  在 doc/spec/v3-<slug>/ 下新建三个文件，拆成 4–6 个任务，编号从 T1、D1、AC-01 开始；规划一个集成分支 feat/v3-<slug> 而不是每个任务一个分支；没有改 spec 以外的文件；最后请用户确认。

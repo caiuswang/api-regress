@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: simple-timeout-flag
+expected_outcome: |
+  在 doc/spec/v3-<slug>/ 下新建 spec.md、design.md、tasks.md，拆成 1–2 个任务，编号从 T1 开始；没有改 src/、tests/、doc/user/ 等 spec 以外的文件；最后列出待确认的决策并请用户确认，没有开始实现。

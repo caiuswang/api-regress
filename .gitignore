@@ -23,3 +23,9 @@ api-regress-out/
 
 # 系统
 .DS_Store
+
+# Claude Code：本地状态不提交，只提交项目 skill（全局 gitignore 忽略了 .claude/，这里重新放开）
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*-workspace/

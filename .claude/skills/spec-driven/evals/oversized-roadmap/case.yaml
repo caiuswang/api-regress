@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: oversized-roadmap
+expected_outcome: |
+  新建 spec 目录并起草；拆出来超过 6 个任务时停下来让用户选择（接受、拆成多个 spec 或合并任务），而不是直接定稿；指出 POST 和非目标或已有决策的冲突；没有改 spec 以外的文件。
