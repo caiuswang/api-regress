@@ -1,6 +1,6 @@
 # api-regress v2 技术设计约束
 
-> 配套 [spec-v2.md](spec-v2.md)。v1 的约束（[spec-v1-design.md](spec-v1-design.md)、`doc/dev/`）全部继续有效，本文只写 v2 新增的部分。行为以 spec 为准，两者冲突时按 spec 执行。
+> 配套 [spec.md](spec.md)。v1 的约束（[v1 design](../v1-mvp/design.md)、`doc/dev/`）全部继续有效，本文只写 v2 新增的部分。行为以 spec 为准，两者冲突时按 spec 执行。
 > 实现完成后，相应内容迁移到 `doc/dev/`。
 
 ## 1. 模块划分

@@ -1,6 +1,6 @@
 # api-regress v1 任务拆分
 
-> 依据：[spec-v1.md](spec-v1.md)、[spec-v1-design.md](spec-v1-design.md)
+> 依据：[spec.md](spec.md)、[design.md](design.md)
 > 每个任务结束时都能独立跑测试、独立 review。验收项（AC）编号对应 spec §12.3。
 
 ## 依赖关系

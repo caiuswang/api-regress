@@ -1,6 +1,6 @@
 # api-regress v1 技术设计约束
 
-> 配套 [spec-v1.md](spec-v1.md)。本文写的是实现时必须遵守的技术约束，还有经过实测验证的结论。行为以 spec 为准，两者冲突时按 spec 执行。
+> 配套 [spec.md](spec.md)。本文写的是实现时必须遵守的技术约束，还有经过实测验证的结论。行为以 spec 为准，两者冲突时按 spec 执行。
 > 实现完成后，相应内容迁移到 `doc/dev/`。
 
 ## 1. 分层与接口
@@ -21,7 +21,7 @@ flowchart LR
 
 - `core` 是纯库，输入和输出都用 pydantic v2 模型。
 - 用 import-linter 的 `forbidden` 契约禁止 `core` 引用 `cli` 和 `report`，CI 里执行 `lint-imports`。已实测：违规时退出码为 1。
-- `core.service` 对外提供 async API：`validate_suite`、`run`、`record`、`compare`、`accept`，另外提供同步包装。全部已实现（进度事件、`cancel_event` 见 [doc/dev/architecture.md](../dev/architecture.md) 的「run 主流程」，快照命令见「record / compare / accept」）。
+- `core.service` 对外提供 async API：`validate_suite`、`run`、`record`、`compare`、`accept`，另外提供同步包装。全部已实现（进度事件、`cancel_event` 见 [doc/dev/architecture.md](../../dev/architecture.md) 的「run 主流程」，快照命令见「record / compare / accept」）。
 
 ### 1.1 建议的模块划分
 
@@ -54,33 +54,33 @@ flowchart LR
 | 请求状态判定 | 有序的 `(谓词, 状态, 提示)` 列表，取第一个匹配项（已实现，见 doc/dev） |
 | diff | 按 JSON 类型分发到不同函数（已实现，见 doc/dev） |
 | 数组模式 | `dict[mode, fn]` 分发（已实现，见 doc/dev） |
-| 规则合并 | 对每个属性用 `max(key=...)` 选胜者（已实现，见 [doc/dev/architecture.md](../dev/architecture.md)） |
+| 规则合并 | 对每个属性用 `max(key=...)` 选胜者（已实现，见 [doc/dev/architecture.md](../../dev/architecture.md)） |
 | 退出码 | 按 2>3>1>4>0 的顺序排列谓词列表，取第一个满足的（已实现，见 doc/dev） |
 
 ## 2. JSON 解析与数字（已实测）
 
-- 解析、Decimal、重复 key、NaN（含比较时的特殊处理）、BOM、charset、小数位的计算方式**已实现**，见 [doc/dev/architecture.md](../dev/architecture.md) 的「JSON 解析」一节。
+- 解析、Decimal、重复 key、NaN（含比较时的特殊处理）、BOM、charset、小数位的计算方式**已实现**，见 [doc/dev/architecture.md](../../dev/architecture.md) 的「JSON 解析」一节。
 - `result.json` 里的 Decimal 输出已实现（规范字符串，小数位与原文相同），见 doc/dev 的「result.json 契约」。快照保存 body 的原文，以快照为准。
 
 ## 3. 表达式引擎（simpleeval，已实测）
 
-已在 T3 落地，实现约束迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「表达式引擎」一节。
+已在 T3 落地，实现约束迁到 [doc/dev/architecture.md](../../dev/architecture.md) 的「表达式引擎」一节。
 
 ## 4. result.json 契约
 
-已在 T4 落地，契约迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「result.json 契约」一节，JSON Schema 在 `schema/result.schema.json`。
+已在 T4 落地，契约迁到 [doc/dev/architecture.md](../../dev/architecture.md) 的「result.json 契约」一节，JSON Schema 在 `schema/result.schema.json`。
 
 ## 5. 运行与 IO
 
 - **请求、重试**：已在 T4 落地，迁到 doc/dev 的「run 主流程」。
-- **快照原子写入、残留恢复、manifest**：已在 T5 落地，迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「快照」一节。
+- **快照原子写入、残留恢复、manifest**：已在 T5 落地，迁到 [doc/dev/architecture.md](../../dev/architecture.md) 的「快照」一节。
 - **指纹、body 存储**：已落地（`core/samples.py`，run 目录和快照共用），见 doc/dev。
-- **HTML 报告**：已在 T6 落地，迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「报告」一节。
+- **HTML 报告**：已在 T6 落地，迁到 [doc/dev/architecture.md](../../dev/architecture.md) 的「报告」一节。
 - **未命中规则检测**：已在 T4 落地，见 doc/dev。
 
 ## 6. 日志
 
-已在 T4 落地，规定迁到 [doc/dev/architecture.md](../dev/architecture.md) 的「日志」一节。
+已在 T4 落地，规定迁到 [doc/dev/architecture.md](../../dev/architecture.md) 的「日志」一节。
 
 ## 7. 依赖
 

@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > 本文件只写长期稳定的项目规则和背景，不写当前进度。
-> 当前进度和下一步做什么，看当前版本的任务文件（`doc/spec/spec-v*-tasks.md`）。
+> 当前进度和下一步做什么，看最新一个 spec 目录里的任务文件（`doc/spec/v*-*/tasks.md`）。
 
 ## 项目背景
 
@@ -19,13 +19,19 @@ api-regress 是一个给 QA 做 API 回归用的 Python CLI 工具，开发也�
 | 位置 | 内容 |
 |---|---|
 | `TODO.md` | 已知缺陷和后续计划（HAR 导入等） |
-| `doc/spec/spec-vN.md` | 行为规格，**行为以它为准**；内含验收项（AC）和决策记录 |
-| `doc/spec/spec-vN-design.md` | 实现约束，以及实测过的技术结论；和 spec 冲突时以 spec 为准 |
-| `doc/spec/spec-vN-tasks.md` | 任务拆分、依赖关系、**当前进度** |
+| `doc/spec/vN-<slug>/spec.md` | 行为规格，**行为以它为准**；内含验收项（AC）和决策记录。每个需求一个目录，v2 起只写相对上一版的增量 |
+| `doc/spec/vN-<slug>/design.md` | 实现约束，以及实测过的技术结论；和 spec 冲突时以 spec 为准 |
+| `doc/spec/vN-<slug>/tasks.md` | 任务拆分、依赖关系、**当前进度** |
 | `doc/user/` | 面向使用者：命令、配置格式（`suite.md`）、对比规则、表达式、报告怎么看 |
 | `doc/dev/` | 面向维护者：模块职责、关键路径、主流程图、数据契约 |
 
 **规则**
+- 走 Spec Driven 流程（细则见 `.claude/skills/spec-driven/SKILL.md`）：
+  1. 新需求或行为变更，先在 `doc/spec/` 下新建 spec 目录，写好 `spec.md`、`design.md`、`tasks.md`。
+  2. 用户明确同意 spec 之前，不改代码（`doc/spec/` 以外的文件都不动）。
+  3. 只有在实现阶段，才改代码。
+- Task 拆分：简单需求 1–2 个，复杂需求 4–6 个，超过 6 个先和用户确认。
+- D / AC / T / S / L / K 编号在每个 spec 内独立，从 1 开始，不接着上一个 spec 往下排（避免多人并行写 spec 时撞号）；引用其他 spec 的编号时带目录名，如"v2-rules-tree 的 D27"。v1、v2 保持原有编号。
 - 改行为之前，先改 spec。
 - spec 里已经确认的决策不要推翻；确实需要变更时，先和用户确认。
 - 文档里**不要引用代码行号**，因为行号容易和代码对不上。改为写文件名或函数名。
@@ -93,8 +99,8 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
 | `result.json` 的数据模型 | 运行 `scripts/export_result_schema.py` 重新导出 JSON Schema，更新 `doc/dev/` 中的数据契约和 `doc/user/run.md` 的字段说明 |
 | 新增、删除、重命名模块，模块职责变化，主流程变化 | `doc/dev/` 中的模块职责、关键路径、主流程图 |
 | 依赖、检查命令、开发命令 | 本文件中的"检查命令"一节、`README.md` |
-| 某项实现约束已经落地 | 把它从 `spec-vN-design.md` 迁到 `doc/dev/` |
-| 任务开始或完成 | `spec-vN-tasks.md` 中的状态列 |
+| 某项实现约束已经落地 | 把它从 spec 目录的 `design.md` 迁到 `doc/dev/` |
+| 任务开始或完成 | spec 目录的 `tasks.md` 中的状态列 |
 | 项目规则或约定变化 | 本文件 |
 
 **检测方法**（收尾前执行）
@@ -106,10 +112,11 @@ pytest                 # 跑单个测试：pytest tests/path/test_x.py::test_nam
 
 ## Git 提交规则
 
-- **提交时机**：只在用户要求时才提交。如果当前在 `main` 上做功能开发，先建分支，命名为 `feat/<任务号>-<简述>`，例如 `feat/t1-config`。
+- **提交时机**：只在用户要求时才提交。
+- **分支**：一个 spec 一个集成分支，从 `main` 拉出，和 spec 目录同名：`feat/vN-<slug>`，例如 `feat/v3-har-import`。这个 spec 的所有 Task 都在这个分支上提交，**不要每个 Task 建一个分支**，除非用户主动要求。（v1、v2 早期的 `feat/t1-config` 这类按任务的分支是旧做法。）
 - **提交信息**：用 Conventional Commits 格式，`<type>(<scope>): <中文简述>`。
   - type：`feat`、`fix`、`refactor`、`test`、`docs`、`chore`。
-  - scope：用模块名或任务号，例如 `feat(config): 支持 ${VAR:-default}`、`docs(spec): 调整数组长度变化的级别`。
+  - scope：用模块名或「版本-任务号」，例如 `feat(config): 支持 ${VAR:-default}`、`feat(v3-t1): 解析 HAR 文件`、`docs(spec): 调整数组长度变化的级别`。
   - 正文说明为什么改。涉及验收项时写上 AC 编号。
 - **按功能提交，一次提交只做一件事**：一个功能（或一个修复）的 spec、代码、测试、文档放在同一个提交里，不要按"文档 / 代码 / 测试"拆开。
   - 例如实现 T1 时，T1 涉及的 spec 补充、代码、测试、`doc/` 更新整体作为一个提交。
