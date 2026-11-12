@@ -18,7 +18,7 @@ api-regress 是一个给 QA 做 API 回归用的 Python CLI 工具，开发也�
 
 | 位置 | 内容 |
 |---|---|
-| `spec-01.md` | 最初的需求简述 |
+| `TODO.md` | 已知缺陷和后续计划（HAR 导入等） |
 | `doc/spec/spec-vN.md` | 行为规格，**行为以它为准**；内含验收项（AC）和决策记录 |
 | `doc/spec/spec-vN-design.md` | 实现约束，以及实测过的技术结论；和 spec 冲突时以 spec 为准 |
 | `doc/spec/spec-vN-tasks.md` | 任务拆分、依赖关系、**当前进度** |
